@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Stylised QR code glyph used as a branded illustration on the pairing screen -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="96dp"
+    android:height="96dp"
+    android:viewportWidth="48"
+    android:viewportHeight="48"
+    android:tint="@color/on_surface_variant">
+    <!-- Top-left finder -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M4,4 h14 v14 h-14 z M7,7 v8 h8 v-8 z M9,9 h4 v4 h-4 z" />
+    <!-- Top-right finder -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M30,4 h14 v14 h-14 z M33,7 v8 h8 v-8 z M35,9 h4 v4 h-4 z" />
+    <!-- Bottom-left finder -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M4,30 h14 v14 h-14 z M7,33 v8 h8 v-8 z M9,35 h4 v4 h-4 z" />
+    <!-- Scattered data modules -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M22,4 h4 v4 h-4 z M22,12 h4 v4 h-4 z M30,22 h4 v4 h-4 z M22,22 h4 v4 h-4 z M22,30 h4 v4 h-4 z M30,30 h4 v4 h-4 z M38,30 h4 v4 h-4 z M22,38 h4 v4 h-4 z M30,38 h4 v4 h-4 z M38,38 h4 v4 h-4 z M40,22 h2 v2 h-2 z" />
+</vector>

@@ -1,0 +1,52 @@
+name: AndroidBridge
+options:
+  bundleIdPrefix: com.androidbridge
+  deploymentTarget:
+    macOS: "13.0"
+  xcodeVersion: "16.0"
+  generateEmptyDirectories: true
+
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    MACOSX_DEPLOYMENT_TARGET: "13.0"
+
+packages:
+  SwiftProtobuf:
+    url: https://github.com/apple/swift-protobuf.git
+    from: "1.28.0"
+
+targets:
+  AndroidBridge:
+    type: application
+    platform: macOS
+    sources:
+      - path: AndroidBridge/Sources
+      - path: AndroidBridge/Resources
+        buildPhase: resources
+        excludes:
+          - "Info.plist"
+          - "AndroidBridge.entitlements"
+      # NOTE: must live under `sources` — a target-level `resources:` key is
+      # silently ignored by xcodegen, which left the app without any icon.
+      - path: AndroidBridge/Assets.xcassets
+        buildPhase: resources
+    dependencies:
+      - package: SwiftProtobuf
+    settings:
+      base:
+        PRODUCT_NAME: "Mac Connect"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        INFOPLIST_FILE: AndroidBridge/Resources/Info.plist
+        PRODUCT_BUNDLE_IDENTIFIER: com.androidbridge.mac
+        CODE_SIGN_ENTITLEMENTS: AndroidBridge/Resources/AndroidBridge.entitlements
+        LD_RUNPATH_SEARCH_PATHS: "@executable_path/../Frameworks"
+        COMBINE_HIDPI_IMAGES: true
+    entitlements:
+      path: AndroidBridge/Resources/AndroidBridge.entitlements
+      properties:
+        com.apple.security.app-sandbox: false
+        com.apple.security.network.client: true
+        com.apple.security.network.server: true
+        com.apple.security.device.audio-input: true
+        com.apple.security.device.camera: true

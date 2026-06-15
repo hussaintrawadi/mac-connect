@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- Covers the whole shared storage so files dropped from the Mac (into
+         Download etc.) can be shared into other apps via FileProvider. -->
+    <external-path name="external_storage" path="." />
+    <external-files-path name="external_files" path="." />
+    <cache-path name="cache" path="." />
+</paths>

@@ -1,0 +1,563 @@
+syntax = "proto3";
+
+package androidbridge;
+
+option java_package = "com.androidbridge.proto";
+option java_multiple_files = false;
+option java_outer_classname = "Messages";
+option swift_prefix = "AB";
+
+// ---------------------------------------------------------------------------
+// Envelope — every message over the wire is wrapped in this
+// ---------------------------------------------------------------------------
+
+message Envelope {
+  uint64 sequence = 1;
+  uint64 timestamp_ms = 2;
+
+  oneof payload {
+    Handshake handshake = 10;
+    HandshakeResponse handshake_response = 11;
+    Heartbeat heartbeat = 12;
+    Ack ack = 13;
+
+    NotificationEvent notification_event = 20;
+    NotificationAction notification_action = 21;
+
+    SmsConversation sms_conversation = 30;
+    SmsMessage sms_message = 31;
+    SmsSend sms_send = 32;
+    SmsDeliveryStatus sms_delivery_status = 33;
+
+    ClipboardSync clipboard_sync = 40;
+    UrlHandoff url_handoff = 41;
+
+    FileListRequest file_list_request = 50;
+    FileListResponse file_list_response = 51;
+    FileDownloadRequest file_download_request = 52;
+    FileUploadRequest file_upload_request = 53;
+    FileChunk file_chunk = 54;
+    FileTransferComplete file_transfer_complete = 55;
+    FileTransferCancel file_transfer_cancel = 56;
+
+    VideoConfig video_config = 60;
+    VideoFrame video_frame = 61;
+
+    TouchEvent touch_event = 70;
+    KeyEvent key_event = 71;
+    ScrollEvent scroll_event = 72;
+
+    CallEvent call_event = 80;
+    CallControl call_control = 81;
+    CallAudioChunk call_audio_chunk = 82;
+
+    MediaState media_state = 90;
+    MediaControl media_control = 91;
+
+    ContactList contact_list = 100;
+    ContactRequest contact_request = 101;
+    CallLogList call_log_list = 102;
+    CallLogRequest call_log_request = 103;
+
+    DeviceInfo device_info = 110;
+
+    GalleryRequest gallery_request = 120;
+    GalleryResponse gallery_response = 121;
+
+    ConnectionControl connection_control = 122;
+
+    MacControl mac_control = 123;
+    MacStatus mac_status = 124;
+    MacMediaState mac_media_state = 125;
+    MacMediaControl mac_media_control = 126;
+    GalleryAlbumsRequest gallery_albums_request = 127;
+    GalleryAlbumsResponse gallery_albums_response = 128;
+    FileOperation file_operation = 129;
+    FileOperationResult file_operation_result = 130;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Connection & Pairing
+// ---------------------------------------------------------------------------
+
+message Handshake {
+  string device_id = 1;
+  string device_name = 2;
+  uint32 protocol_version = 3;
+  bytes public_key = 4;
+}
+
+message HandshakeResponse {
+  bool accepted = 1;
+  string device_id = 2;
+  string device_name = 3;
+  bytes public_key = 4;
+  string reject_reason = 5;
+}
+
+message Heartbeat {
+  uint64 timestamp_ms = 1;
+}
+
+message Ack {
+  uint64 sequence = 1;
+  bool success = 2;
+  string error = 3;
+}
+
+// ---------------------------------------------------------------------------
+// Device Info
+// ---------------------------------------------------------------------------
+
+message DeviceInfo {
+  string device_name = 1;
+  string os_version = 2;
+  int32 battery_level = 3;
+  bool battery_charging = 4;
+  int32 screen_width = 5;
+  int32 screen_height = 6;
+  float screen_density = 7;
+}
+
+// ---------------------------------------------------------------------------
+// Notifications
+// ---------------------------------------------------------------------------
+
+message NotificationEvent {
+  string notification_id = 1;
+  string app_package = 2;
+  string app_name = 3;
+  string title = 4;
+  string body = 5;
+  uint64 timestamp_ms = 6;
+  bytes icon_png = 7;
+  bool has_reply_action = 8;
+  bool is_dismissable = 9;
+  string category = 10;
+}
+
+message NotificationAction {
+  string notification_id = 1;
+
+  enum Action {
+    DISMISS = 0;
+    REPLY = 1;
+    MARK_READ = 2;
+  }
+
+  Action action = 2;
+  string reply_text = 3;
+}
+
+// ---------------------------------------------------------------------------
+// SMS / MMS
+// ---------------------------------------------------------------------------
+
+message SmsConversation {
+  string thread_id = 1;
+  string contact_name = 2;
+  string contact_number = 3;
+  bytes contact_photo = 4;
+  string last_message = 5;
+  uint64 last_timestamp_ms = 6;
+  int32 unread_count = 7;
+  repeated SmsMessage messages = 8;
+}
+
+message SmsMessage {
+  string message_id = 1;
+  string thread_id = 2;
+  string sender = 3;
+  string body = 4;
+  uint64 timestamp_ms = 5;
+  bool is_outgoing = 6;
+  bool is_read = 7;
+  bool is_mms = 8;
+  bytes mms_attachment = 9;
+  string mms_content_type = 10;
+  string contact_name = 11;
+}
+
+message SmsSend {
+  string recipient = 1;
+  string body = 2;
+  string request_id = 3;
+}
+
+message SmsDeliveryStatus {
+  string request_id = 1;
+  bool delivered = 2;
+  string error = 3;
+}
+
+// ---------------------------------------------------------------------------
+// Clipboard
+// ---------------------------------------------------------------------------
+
+message ClipboardSync {
+  enum ContentType {
+    TEXT = 0;
+    URL = 1;
+    IMAGE = 2;
+  }
+
+  ContentType type = 1;
+  string text = 2;
+  bytes image_data = 3;
+  string mime_type = 4;
+}
+
+// ---------------------------------------------------------------------------
+// URL Handoff
+// ---------------------------------------------------------------------------
+
+message UrlHandoff {
+  string url = 1;
+  string title = 2;
+}
+
+// ---------------------------------------------------------------------------
+// File System
+// ---------------------------------------------------------------------------
+
+message FileListRequest {
+  string path = 1;
+}
+
+message FileListResponse {
+  string path = 1;
+  repeated FileEntry entries = 2;
+}
+
+message FileEntry {
+  string name = 1;
+  string path = 2;
+  bool is_directory = 3;
+  int64 size_bytes = 4;
+  uint64 modified_ms = 5;
+  string mime_type = 6;
+  bytes thumbnail = 7;   // small JPEG preview for images/videos (optional)
+}
+
+message FileDownloadRequest {
+  string path = 1;
+  string transfer_id = 2;
+}
+
+message FileUploadRequest {
+  string destination_path = 1;
+  string file_name = 2;
+  int64 total_size = 3;
+  string transfer_id = 4;
+  bool share_after = 5;
+}
+
+message FileChunk {
+  string transfer_id = 1;
+  uint32 chunk_index = 2;
+  bytes data = 3;
+  bool is_last = 4;
+}
+
+message FileTransferComplete {
+  string transfer_id = 1;
+  bytes sha256 = 2;
+}
+
+message FileTransferCancel {
+  string transfer_id = 1;
+  string reason = 2;
+}
+
+// Finder-style file management (Mac -> phone)
+message FileOperation {
+  enum Op {
+    CREATE_DIR = 0;   // path = parent dir, name = new folder name
+    RENAME = 1;       // path = existing file/dir, name = new name
+    DELETE = 2;       // path = file/dir to delete
+  }
+  Op op = 1;
+  string path = 2;
+  string name = 3;
+}
+
+message FileOperationResult {
+  bool success = 1;
+  string error = 2;
+  string parent_path = 3;   // directory the Mac should re-list
+}
+
+// ---------------------------------------------------------------------------
+// Screen Mirroring
+// ---------------------------------------------------------------------------
+
+message VideoConfig {
+  int32 width = 1;
+  int32 height = 2;
+  int32 fps = 3;
+  int32 bitrate = 4;
+
+  enum Orientation {
+    PORTRAIT = 0;
+    LANDSCAPE = 1;
+  }
+
+  Orientation orientation = 5;
+}
+
+message VideoFrame {
+  bytes data = 1;
+  uint64 timestamp_us = 2;
+  bool is_keyframe = 3;
+}
+
+// ---------------------------------------------------------------------------
+// Input (Mac → Android)
+// ---------------------------------------------------------------------------
+
+message TouchEvent {
+  enum TouchAction {
+    DOWN = 0;
+    MOVE = 1;
+    UP = 2;
+    LONG_PRESS = 3;
+  }
+
+  TouchAction action = 1;
+  float x = 2;
+  float y = 3;
+  int32 pointer_id = 4;
+}
+
+message KeyEvent {
+  int32 key_code = 1;
+  string text = 2;
+  bool is_press = 3;
+  bool shift = 4;
+  bool ctrl = 5;
+  bool alt = 6;
+}
+
+message ScrollEvent {
+  float dx = 1;
+  float dy = 2;
+  float x = 3;
+  float y = 4;
+}
+
+// ---------------------------------------------------------------------------
+// Calls
+// ---------------------------------------------------------------------------
+
+message CallEvent {
+  enum CallState {
+    RINGING = 0;
+    ACTIVE = 1;
+    HELD = 2;
+    ENDED = 3;
+    DIALING = 4;
+  }
+
+  CallState state = 1;
+  string phone_number = 2;
+  string contact_name = 3;
+  bytes contact_photo = 4;
+  bool is_outgoing = 5;
+  uint64 start_time_ms = 6;
+}
+
+message CallControl {
+  enum Action {
+    ANSWER = 0;
+    DECLINE = 1;
+    HANG_UP = 2;
+    MUTE = 3;
+    UNMUTE = 4;
+    HOLD = 5;
+    RESUME = 6;
+    DIAL = 7;
+    DTMF = 8;
+  }
+
+  Action action = 1;
+  string phone_number = 2;
+  string dtmf_digit = 3;
+}
+
+message CallAudioChunk {
+  bytes opus_data = 1;
+  uint64 timestamp_us = 2;
+  uint32 sequence = 3;
+}
+
+// ---------------------------------------------------------------------------
+// Media Control
+// ---------------------------------------------------------------------------
+
+message MediaState {
+  string title = 1;
+  string artist = 2;
+  string album = 3;
+  bytes album_art = 4;
+  bool is_playing = 5;
+  int64 position_ms = 6;
+  int64 duration_ms = 7;
+  string app_package = 8;
+}
+
+message MediaControl {
+  enum Action {
+    PLAY = 0;
+    PAUSE = 1;
+    NEXT = 2;
+    PREVIOUS = 3;
+    SEEK = 4;
+  }
+
+  Action action = 1;
+  int64 seek_position_ms = 2;
+}
+
+// ---------------------------------------------------------------------------
+// Contacts
+// ---------------------------------------------------------------------------
+
+message ContactRequest {
+  string search_query = 1;
+  int32 page = 2;
+  int32 page_size = 3;
+}
+
+message ContactList {
+  repeated Contact contacts = 1;
+  bool has_more = 2;
+}
+
+message Contact {
+  string contact_id = 1;
+  string name = 2;
+  repeated string phone_numbers = 3;
+  bytes photo = 4;
+}
+
+// ---------------------------------------------------------------------------
+// Gallery
+// ---------------------------------------------------------------------------
+
+message GalleryRequest {
+  int32 offset = 1;
+  int32 limit = 2;
+  string bucket_id = 3;
+}
+
+message GalleryItem {
+  string id = 1;
+  string path = 2;
+  string name = 3;
+  uint64 date_taken_ms = 4;
+  int64 size_bytes = 5;
+  bool is_video = 6;
+  bytes thumbnail = 7;
+  int32 width = 8;
+  int32 height = 9;
+}
+
+message GalleryResponse {
+  repeated GalleryItem items = 1;
+  int32 total_count = 2;
+  int32 offset = 3;
+}
+
+// ---------------------------------------------------------------------------
+// Connection control (Mac → phone): disconnect to save battery
+// ---------------------------------------------------------------------------
+
+message ConnectionControl {
+  enum Action {
+    DISCONNECT = 0;
+    START_MIRROR = 1;   // Mac asks the phone to begin screen capture
+  }
+  Action action = 1;
+}
+
+// ---------------------------------------------------------------------------
+// Mac control + status (phone ⇄ Mac reverse features)
+// ---------------------------------------------------------------------------
+
+message MacControl {
+  enum Action {
+    LOCK = 0;          // lock / sleep the Mac display
+    RING = 1;          // play a find-my-Mac alarm sound
+    STOP_RING = 2;     // stop the alarm
+    SET_VOLUME = 3;    // set system output volume (value = 0-100)
+    MUTE = 4;          // mute system output
+    UNMUTE = 5;        // unmute system output
+    WIFI_ON = 6;       // turn Wi-Fi on
+    WIFI_OFF = 7;      // turn Wi-Fi off
+    SLEEP = 8;         // put the whole Mac to sleep
+    SET_BRIGHTNESS = 9;// set display brightness (value = 0-100)
+    BT_ON = 10;        // turn Bluetooth on
+    BT_OFF = 11;       // turn Bluetooth off
+  }
+  Action action = 1;
+  int32 value = 2;   // SET_VOLUME / SET_BRIGHTNESS: 0-100
+}
+
+message MacStatus {
+  int32 battery_level = 1;   // 0-100, -1 if unknown
+  bool is_charging = 2;
+  string device_name = 3;
+  int32 volume = 4;          // 0-100, -1 if unknown
+  bool muted = 5;
+  bool wifi_on = 6;
+  int32 brightness = 7;      // 0-100, -1 if unknown
+  bool bluetooth_on = 8;
+}
+
+// ---------------------------------------------------------------------------
+// Call log (phone → Mac): recent call history
+// ---------------------------------------------------------------------------
+
+message CallLogEntry {
+  string number = 1;
+  string name = 2;
+  int32 type = 3;        // 1=incoming, 2=outgoing, 3=missed
+  uint64 date_ms = 4;
+  int32 duration_s = 5;
+}
+
+message CallLogList {
+  repeated CallLogEntry entries = 1;
+}
+
+message CallLogRequest {}
+
+message MacMediaState {
+  bool has_media = 1;
+  string title = 2;
+  string artist = 3;
+  bool is_playing = 4;
+}
+
+message MacMediaControl {
+  enum Action {
+    PLAY_PAUSE = 0;
+    NEXT = 1;
+    PREVIOUS = 2;
+  }
+  Action action = 1;
+}
+
+message GalleryAlbum {
+  string id = 1;
+  string name = 2;
+  int32 count = 3;
+  bytes cover_thumbnail = 4;
+}
+
+message GalleryAlbumsRequest {}
+
+message GalleryAlbumsResponse {
+  repeated GalleryAlbum albums = 1;
+}

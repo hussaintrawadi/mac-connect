@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Mac Connect</string>
+    <string name="channel_connection">Connection</string>
+    <string name="channel_connection_desc">Shows when Mac Connect is connected to your Mac</string>
+    <string name="notification_connected">Connected to %s</string>
+    <string name="notification_searching">Searching for Mac...</string>
+    <string name="notification_disconnected">Disconnected</string>
+</resources>

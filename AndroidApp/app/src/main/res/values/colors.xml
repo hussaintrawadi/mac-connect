@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- iOS dark-mode system palette -->
+    <!-- Accent: iOS systemBlue (dark) -->
+    <color name="primary">#0A84FF</color>
+    <color name="primary_container">#15233A</color>
+    <color name="on_primary">#FFFFFF</color>
+
+    <!-- Surfaces: iOS systemBackground / secondarySystemGroupedBackground -->
+    <color name="background">#000000</color>
+    <color name="surface">#1C1C1E</color>
+    <color name="surface_elevated">#2C2C2E</color>
+    <color name="on_surface">#FFFFFF</color>
+    <color name="on_surface_variant">#AEAEB2</color>
+
+    <!-- Separators and grouped-card fill (iOS cards are borderless) -->
+    <color name="outline">#38383A</color>
+    <color name="card_background">#1C1C1E</color>
+    <color name="text_secondary">#8E8E93</color>
+    <color name="text_tertiary">#636366</color>
+
+    <!-- Status accents: iOS systemGreen / systemRed (dark) -->
+    <color name="accent_green">#30D158</color>
+    <color name="accent_red">#FF453A</color>
+
+    <!-- Scrim used behind the QR viewfinder -->
+    <color name="scrim">#80000000</color>
+
+    <!-- Launcher icon background — leave untouched -->
+    <color name="ic_launcher_background">#111111</color>
+</resources>
