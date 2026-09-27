@@ -1,0 +1,36 @@
+# --- macOS ---
+.DS_Store
+**/.DS_Store
+
+# --- Build outputs / artifacts ---
+dist/
+*.apk
+*.dmg
+*.ipa
+
+# --- Android ---
+AndroidApp/.gradle/
+AndroidApp/.kotlin/
+AndroidApp/build/
+AndroidApp/app/build/
+AndroidApp/app/.cxx/
+AndroidApp/local.properties
+AndroidApp/.idea/
+AndroidApp/captures/
+*.hprof
+
+# Release signing — NEVER commit the keystore or its passwords
+AndroidApp/keystore/*.jks
+AndroidApp/keystore/*.keystore
+AndroidApp/keystore.properties
+
+# --- Xcode / Mac ---
+# The Xcode project is generated from project.yml by XcodeGen.
+MacApp/*.xcodeproj
+MacApp/build/
+DerivedData/
+*.xcuserstate
+**/xcuserdata/
+
+# --- Misc ---
+*.log
