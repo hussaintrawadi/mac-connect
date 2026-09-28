@@ -135,14 +135,16 @@ screen while you mirror it), and it goes straight to your other device.
 
 ## Install
 
-Build both apps from source with [docs/BUILDING.md](docs/BUILDING.md). With Xcode and
-Android Studio already installed it takes about ten minutes. Signed downloads will be
-published on the [Releases](https://github.com/hussaintrawadi/mac-connect/releases) page.
+Download both apps from the [latest release](https://github.com/hussaintrawadi/mac-connect/releases/latest),
+or build them from source with [docs/BUILDING.md](docs/BUILDING.md).
 
-1. **Mac.** Open the built app (or the DMG from `scripts/build_dmg.sh`) and move
-   **Mac Connect** to Applications. On first launch, allow Local Network, Camera, Microphone
-   and, if you want them, Notifications.
-2. **Android.** Install the APK. During onboarding, grant Messages, Contacts, Phone, Photos
+1. **Mac.** Open `MacConnect-x.y.z.dmg` and drag **Mac Connect** to Applications. It runs on
+   Intel and Apple Silicon Macs with macOS 13 or later. The first time you open it, macOS says it cannot check the app for malware, because it is not
+   notarised by Apple. Open **System Settings → Privacy & Security**, scroll down, and click
+   **Open Anyway**. You only do this once.
+   Then allow Local Network, Camera, Microphone and, if you want them, Notifications.
+2. **Android.** Install `MacConnect-x.y.z.apk` (allow installs from your browser or file
+   manager when Android asks). During onboarding, grant Messages, Contacts, Phone, Photos
    and Media, Notification access, Accessibility, and "Display over other apps". The in-app
    privacy screen explains what each one is for.
 3. **Pair.** Open Mac Connect on the Mac, which shows a QR code. On the phone tap
