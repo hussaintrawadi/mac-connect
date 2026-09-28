@@ -79,20 +79,32 @@ class FileSystemBridge(private val context: Context? = null) {
         sendFileList(path, entries)
 
         Thread {
-            var thumbBudget = 60
-            var generated = 0
-            val withThumbs = entries.map { entry ->
-                if (!entry.isDirectory && thumbBudget > 0 &&
-                    (entry.mimeType.startsWith("image/") || entry.mimeType.startsWith("video/"))
-                ) {
-                    val thumb = fileThumbnail(entry.path, entry.mimeType.startsWith("video/"))
-                    if (thumb != null) {
-                        thumbBudget--; generated++
-                        entry.toBuilder().setThumbnail(ByteString.copyFrom(thumb)).build()
-                    } else entry
-                } else entry
+            val hasMedia = entries.any {
+                !it.isDirectory && (it.mimeType.startsWith("image/") || it.mimeType.startsWith("video/"))
             }
-            if (generated > 0) sendFileList(path, withThumbs)
+            if (!hasMedia) return@Thread
+
+            // Generate previews in parallel (was sequential — slow on media-heavy folders).
+            val threads = Runtime.getRuntime().availableProcessors().coerceIn(2, 6)
+            val pool = java.util.concurrent.Executors.newFixedThreadPool(threads)
+            val budget = java.util.concurrent.atomic.AtomicInteger(60)
+            try {
+                val withThumbs = entries.map { entry ->
+                    pool.submit(java.util.concurrent.Callable {
+                        if (!entry.isDirectory &&
+                            (entry.mimeType.startsWith("image/") || entry.mimeType.startsWith("video/")) &&
+                            budget.getAndDecrement() > 0
+                        ) {
+                            val thumb = fileThumbnail(entry.path, entry.mimeType.startsWith("video/"))
+                            if (thumb != null) entry.toBuilder().setThumbnail(ByteString.copyFrom(thumb)).build()
+                            else entry
+                        } else entry
+                    })
+                }.map { it.get() }
+                sendFileList(path, withThumbs)
+            } finally {
+                pool.shutdown()
+            }
         }.start()
     }
 
@@ -424,6 +436,84 @@ class FileSystemBridge(private val context: Context? = null) {
         if (file.isDirectory) return "inode/directory"
         val ext = file.extension.lowercase()
         return MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext) ?: "application/octet-stream"
+    }
+
+    // MARK: - AirDrop push (phone → Mac)
+
+    /**
+     * Stream a shared content:// file to the Mac (AirDrop-style). The Mac saves it
+     * into ~/Downloads and reveals it in Finder. Returns false if we're not connected.
+     */
+    fun pushUriToMac(uri: android.net.Uri): Boolean {
+        val ctx = context ?: return false
+        val send = onSendEnvelope ?: return false   // null = not connected
+
+        val (name, size) = queryNameAndSize(ctx, uri)
+        val transferId = UUID.randomUUID().toString()
+
+        Thread {
+            try {
+                // Announce the incoming file so the Mac opens a receive slot.
+                val req = FileUploadRequest.newBuilder()
+                    .setDestinationPath("")            // "" → Mac's Downloads
+                    .setFileName(name)
+                    .setTotalSize(size)
+                    .setTransferId(transferId)
+                    .setShareAfter(false)
+                    .build()
+                send(Envelope.newBuilder().setTimestampMs(System.currentTimeMillis())
+                    .setFileUploadRequest(req).build())
+
+                var index = 0
+                ctx.contentResolver.openInputStream(uri)?.use { input ->
+                    val buffer = ByteArray(CHUNK_SIZE)
+                    var read: Int
+                    while (input.read(buffer).also { read = it } != -1) {
+                        val chunk = FileChunk.newBuilder()
+                            .setTransferId(transferId)
+                            .setChunkIndex(index)
+                            .setData(ByteString.copyFrom(buffer, 0, read))
+                            .setIsLast(false)
+                            .build()
+                        send(Envelope.newBuilder().setTimestampMs(System.currentTimeMillis())
+                            .setFileChunk(chunk).build())
+                        index++
+                    }
+                }
+                // Final marker chunk.
+                val last = FileChunk.newBuilder()
+                    .setTransferId(transferId)
+                    .setChunkIndex(index)
+                    .setData(ByteString.EMPTY)
+                    .setIsLast(true)
+                    .build()
+                send(Envelope.newBuilder().setTimestampMs(System.currentTimeMillis())
+                    .setFileChunk(last).build())
+                Log.i(TAG, "Pushed $name ($size bytes) to Mac")
+            } catch (e: Exception) {
+                Log.e(TAG, "Push to Mac failed for $uri", e)
+                sendTransferCancel(transferId, e.message ?: "Send failed")
+            }
+        }.start()
+        return true
+    }
+
+    private fun queryNameAndSize(ctx: Context, uri: android.net.Uri): Pair<String, Long> {
+        var name = "shared_file"
+        var size = 0L
+        try {
+            ctx.contentResolver.query(uri, null, null, null, null)?.use { c ->
+                if (c.moveToFirst()) {
+                    val nameIdx = c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                    val sizeIdx = c.getColumnIndex(android.provider.OpenableColumns.SIZE)
+                    if (nameIdx >= 0 && !c.isNull(nameIdx)) name = c.getString(nameIdx)
+                    if (sizeIdx >= 0 && !c.isNull(sizeIdx)) size = c.getLong(sizeIdx)
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not resolve name/size for $uri", e)
+        }
+        return name to size
     }
 
     companion object {

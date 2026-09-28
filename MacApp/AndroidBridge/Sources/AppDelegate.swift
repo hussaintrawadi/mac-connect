@@ -94,6 +94,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NotificationCenter.default.addObserver(forName: .openDialPad, object: nil, queue: .main) { [weak self] _ in
             self?.statusBarController?.triggerOpenDialPad()
         }
+        NotificationCenter.default.addObserver(forName: .findPhone, object: nil, queue: .main) { [weak self] _ in
+            self?.statusBarController?.triggerFindPhone()
+        }
+        NotificationCenter.default.addObserver(forName: .sendToPhone, object: nil, queue: .main) { [weak self] _ in
+            self?.statusBarController?.triggerSendToPhone()
+        }
     }
 
     // MARK: - Auto Launch

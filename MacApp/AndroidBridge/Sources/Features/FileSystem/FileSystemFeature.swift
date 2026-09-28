@@ -18,6 +18,18 @@ final class FileSystemFeature: ObservableObject {
     private var revealOnComplete: Set<String> = []
     private var downloadCompletions: [String: (URL?) -> Void] = [:]
 
+    // AirDrop: files the phone pushes to us (unsolicited) land here on their way
+    // into ~/Downloads.
+    private var activeReceives: [String: IncomingReceive] = [:]
+    private struct IncomingReceive {
+        let destination: URL
+        let handle: FileHandle
+        var received: Int64
+        let total: Int64
+    }
+    /// Called when an AirDrop from the phone finishes (path). Wire this to show a toast.
+    var onFileReceived: ((URL) -> Void)?
+
     /// Download a file to a temp location and call back with its URL — used for
     /// drag-out to Finder (NSItemProvider file promise) and Cmd-C.
     func downloadToTemp(item: FileItem, completion: @escaping (URL?) -> Void) {
@@ -202,6 +214,72 @@ final class FileSystemFeature: ObservableObject {
     func handleFileChunk(_ chunk: ABFileChunk) {
         if let download = activeDownloads[chunk.transferID] {
             handleDownloadChunk(chunk, download: download)
+        } else if activeReceives[chunk.transferID] != nil {
+            handleReceiveChunk(chunk)
+        }
+    }
+
+    // MARK: - AirDrop receive (phone → Mac push)
+
+    /// The phone pushed a file to us. Stream it straight into ~/Downloads.
+    func handleIncomingUpload(_ request: ABFileUploadRequest) {
+        let downloads = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Downloads")
+        let name = request.fileName.isEmpty ? "Received File" : request.fileName
+        let dest = uniqueDestination(downloads.appendingPathComponent(name))
+
+        FileManager.default.createFile(atPath: dest.path, contents: nil)
+        guard let handle = try? FileHandle(forWritingTo: dest) else {
+            logger.error("Cannot open incoming file for writing: \(dest.path)")
+            return
+        }
+        activeReceives[request.transferID] = IncomingReceive(
+            destination: dest, handle: handle, received: 0, total: request.totalSize
+        )
+
+        let transfer = FileTransfer(
+            id: request.transferID,
+            fileName: dest.lastPathComponent,
+            totalBytes: request.totalSize,
+            direction: .download
+        )
+        DispatchQueue.main.async { self.transfers.append(transfer) }
+        logger.info("Incoming file from phone: \(dest.lastPathComponent) (\(request.totalSize) bytes)")
+    }
+
+    private func handleReceiveChunk(_ chunk: ABFileChunk) {
+        guard var recv = activeReceives[chunk.transferID] else { return }
+
+        if !chunk.data.isEmpty {
+            recv.handle.write(chunk.data)
+            recv.received += Int64(chunk.data.count)
+            activeReceives[chunk.transferID] = recv
+            DispatchQueue.main.async {
+                if let idx = self.transfers.firstIndex(where: { $0.id == chunk.transferID }) {
+                    self.transfers[idx].transferredBytes = recv.received
+                }
+            }
+        }
+
+        if chunk.isLast {
+            try? recv.handle.close()
+            activeReceives.removeValue(forKey: chunk.transferID)
+
+            // Ack the phone so its transfer UI can complete.
+            var complete = ABFileTransferComplete()
+            complete.transferID = chunk.transferID
+            var env = ABEnvelope()
+            env.fileTransferComplete = complete
+            onSendEnvelope?(env)
+
+            DispatchQueue.main.async {
+                if let idx = self.transfers.firstIndex(where: { $0.id == chunk.transferID }) {
+                    self.transfers[idx].status = .completed
+                }
+                NSWorkspace.shared.activateFileViewerSelecting([recv.destination])
+                self.onFileReceived?(recv.destination)
+            }
+            logger.info("AirDrop receive complete: \(recv.destination.lastPathComponent)")
         }
     }
 

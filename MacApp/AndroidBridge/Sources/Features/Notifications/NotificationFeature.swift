@@ -2,9 +2,19 @@ import Foundation
 import UserNotifications
 import os
 
-final class NotificationFeature: NSObject, UNUserNotificationCenterDelegate {
+final class NotificationFeature: NSObject, ObservableObject, UNUserNotificationCenterDelegate {
     private let logger = Logger(subsystem: "com.androidbridge.mac", category: "Notifications")
     var onSendAction: ((ABEnvelope) -> Void)?
+
+    /// Master on/off toggle (persisted). When off, mirrored notifications are dropped.
+    @Published var enabled: Bool = UserDefaults.standard.object(forKey: "notificationsEnabled") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(enabled, forKey: "notificationsEnabled") }
+    }
+
+    /// Per-app time of the last notification that played a sound. Repeats from the
+    /// same app within this window arrive silently (no repeated AirPods dings).
+    private var lastSoundAt: [String: Date] = [:]
+    private let soundCooldown: TimeInterval = 30
 
     override init() {
         super.init()
@@ -23,10 +33,18 @@ final class NotificationFeature: NSObject, UNUserNotificationCenterDelegate {
     }
 
     func handleNotification(_ event: ABNotificationEvent) {
+        // Master switch — drop everything when notifications are turned off.
+        guard enabled else { return }
+
         let content = UNMutableNotificationContent()
         content.title = "\(event.appName) — \(event.title)"
         content.body = event.body
-        content.sound = .default
+
+        // Show silently on the Mac. Playing a sound here routes it to the Mac's
+        // current output — which, if that's your AirPods, momentarily grabs them
+        // from the phone and interrupts its audio. Your phone still chimes normally.
+        content.sound = nil
+
         // Standard priority — lets macOS Focus/DND filter these like any other app.
         content.interruptionLevel = .active
         content.categoryIdentifier = event.hasReplyAction_p ? "REPLY_CATEGORY" : "DEFAULT_CATEGORY"

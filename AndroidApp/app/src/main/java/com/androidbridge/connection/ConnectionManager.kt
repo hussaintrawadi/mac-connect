@@ -65,6 +65,10 @@ class ConnectionManager(private val context: Context) : MessageHandler {
     val callBridge = CallBridge(context)
     val mediaControlBridge = MediaControlBridge(context)
 
+    // Bluetooth-LE fallback link (works when there's no Wi-Fi). Carries the same
+    // Envelope stream, filtered to the small kinds (notifications / SMS / calls).
+    val bleServer = com.androidbridge.features.bluetooth.BleServer(context)
+
     init {
         val sendFn: (Envelope) -> Unit = { envelope -> sendEnvelope(envelope) }
         notificationBridge.onSendEnvelope = sendFn
@@ -109,6 +113,10 @@ class ConnectionManager(private val context: Context) : MessageHandler {
         ScreenMirrorBridge.instance = screenMirrorBridge
         CallBridge.instance = callBridge
         MediaControlBridge.instance = mediaControlBridge
+
+        // BLE-received envelopes go through the exact same handler as Wi-Fi ones.
+        bleServer.onEnvelope = { env -> handleEnvelope(env) }
+        com.androidbridge.features.bluetooth.BleServer.instance = bleServer
     }
 
     // MARK: - Lifecycle
@@ -128,6 +136,12 @@ class ConnectionManager(private val context: Context) : MessageHandler {
         }
         serverRunning = true
         watchNetworkChanges()
+
+        // Bring up the Bluetooth fallback alongside Wi-Fi (unless the user turned it off).
+        if (context.getSharedPreferences("androidbridge", Context.MODE_PRIVATE)
+                .getBoolean("bluetooth_enabled", true)) {
+            try { bleServer.start() } catch (e: Exception) { Log.w(TAG, "BLE start failed", e) }
+        }
 
         scope.launch {
             startServer()
@@ -172,6 +186,7 @@ class ConnectionManager(private val context: Context) : MessageHandler {
         heartbeatJob?.cancel()
         activeTransport?.close()
         activeTransport = null
+        try { bleServer.stop() } catch (_: Exception) {}
         scope.cancel()
         _state.value = ConnectionState.Disconnected
     }
@@ -244,6 +259,10 @@ class ConnectionManager(private val context: Context) : MessageHandler {
             Log.i(TAG, "Connection established with $addr")
             rateLimiter.recordSuccess(addr)
 
+            // On Wi-Fi now — stop BLE advertising to save battery/radio. It resumes
+            // automatically when this Wi-Fi connection drops (the fallback).
+            try { bleServer.stop() } catch (_: Exception) {}
+
             startHeartbeat(transport)
 
             // IMPORTANT: clipboard / call / media listeners must be registered on the
@@ -268,6 +287,7 @@ class ConnectionManager(private val context: Context) : MessageHandler {
                 activeTransport = null
                 _state.value = ConnectionState.Searching
                 MacBridge.clear()   // status dot reflects the drop in real time
+                resumeBleFallback() // Wi-Fi gone — bring Bluetooth back up
             }
             Log.i(TAG, "Connection closed — waiting for reconnect")
         } catch (e: Exception) {
@@ -277,6 +297,16 @@ class ConnectionManager(private val context: Context) : MessageHandler {
             activeTransport = null
             _state.value = ConnectionState.Searching
             MacBridge.clear()
+            resumeBleFallback()
+        }
+    }
+
+    /// Start BLE advertising again (the Bluetooth fallback) when Wi-Fi isn't carrying
+    /// the connection, so the Mac can still reach us for notifications/calls/SMS.
+    private fun resumeBleFallback() {
+        if (context.getSharedPreferences("androidbridge", Context.MODE_PRIVATE)
+                .getBoolean("bluetooth_enabled", true)) {
+            try { bleServer.start() } catch (e: Exception) { Log.w(TAG, "BLE resume failed", e) }
         }
     }
 
@@ -297,6 +327,14 @@ class ConnectionManager(private val context: Context) : MessageHandler {
                 missedHeartbeats = 0
                 Log.d(TAG, "Heartbeat received")
                 activeTransport?.sendHeartbeat()
+                if (bleServer.isCentralConnected) {
+                    bleServer.send(
+                        Envelope.newBuilder()
+                            .setTimestampMs(System.currentTimeMillis())
+                            .setHeartbeat(Heartbeat.newBuilder().setTimestampMs(System.currentTimeMillis()).build())
+                            .build()
+                    )
+                }
             }
 
             Envelope.PayloadCase.HANDSHAKE -> {
@@ -310,6 +348,19 @@ class ConnectionManager(private val context: Context) : MessageHandler {
                     deviceId = pairingStore.getDeviceId(),
                     deviceName = "${Build.MANUFACTURER} ${Build.MODEL}"
                 )
+                if (bleServer.isCentralConnected) {
+                    bleServer.send(
+                        Envelope.newBuilder()
+                            .setTimestampMs(System.currentTimeMillis())
+                            .setHandshakeResponse(
+                                HandshakeResponse.newBuilder()
+                                    .setAccepted(true)
+                                    .setDeviceId(pairingStore.getDeviceId())
+                                    .setDeviceName("${Build.MANUFACTURER} ${Build.MODEL}")
+                                    .build()
+                            ).build()
+                    )
+                }
 
                 sendDeviceInfo()
             }
@@ -393,10 +444,29 @@ class ConnectionManager(private val context: Context) : MessageHandler {
                             }
                         }
                     }
+                    ConnectionControl.Action.STOP_MIRROR -> {
+                        Log.i(TAG, "Mac closed the mirror — stopping capture so the phone can sleep")
+                        val intent = android.content.Intent(context, com.androidbridge.service.ConnectionService::class.java).apply {
+                            action = com.androidbridge.service.ConnectionService.ACTION_STOP_MIRROR
+                        }
+                        try { androidx.core.content.ContextCompat.startForegroundService(context, intent) } catch (_: Exception) {
+                            stopMirroring()
+                        }
+                    }
                     else -> {
                         Log.i(TAG, "Mac requested disconnect — stopping service")
                         onDisconnectRequested?.invoke()
                     }
+                }
+            }
+
+            Envelope.PayloadCase.FIND_DEVICE -> {
+                if (envelope.findDevice.start) {
+                    Log.i(TAG, "Find My Phone — ringing")
+                    com.androidbridge.features.findphone.FindPhoneAlarm.start(context)
+                } else {
+                    Log.i(TAG, "Find My Phone — stop")
+                    com.androidbridge.features.findphone.FindPhoneAlarm.stop()
                 }
             }
 
@@ -490,6 +560,8 @@ class ConnectionManager(private val context: Context) : MessageHandler {
 
     fun sendEnvelope(envelope: Envelope) {
         activeTransport?.send(envelope)
+        // Also mirror over the Bluetooth fallback when a Mac is linked via BLE.
+        if (bleServer.isCentralConnected) bleServer.send(envelope)
     }
 
     private fun sendDeviceInfo() {
@@ -511,6 +583,23 @@ class ConnectionManager(private val context: Context) : MessageHandler {
             screenHeight = metrics.heightPixels,
             screenDensity = metrics.density
         )
+        if (bleServer.isCentralConnected) {
+            bleServer.send(
+                Envelope.newBuilder()
+                    .setTimestampMs(System.currentTimeMillis())
+                    .setDeviceInfo(
+                        DeviceInfo.newBuilder()
+                            .setDeviceName("${Build.MANUFACTURER} ${Build.MODEL}")
+                            .setOsVersion("Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})")
+                            .setBatteryLevel(batteryLevel)
+                            .setBatteryCharging(isCharging)
+                            .setScreenWidth(metrics.widthPixels)
+                            .setScreenHeight(metrics.heightPixels)
+                            .setScreenDensity(metrics.density)
+                            .build()
+                    ).build()
+            )
+        }
     }
 
     private fun sendContacts() {

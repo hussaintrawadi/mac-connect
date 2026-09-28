@@ -42,26 +42,14 @@ class CallBridge(private val context: Context) {
             .build()
         onSendEnvelope?.invoke(envelope)
 
-        // Manage audio based on state
-        when (event.state) {
-            CallEvent.CallState.ACTIVE -> {
-                if (!isInCall) {
-                    isInCall = true
-                    callAudioBridge.startCapture()
-                    callAudioBridge.startPlayback()
-                    Log.i(TAG, "Call active — audio bridge started")
-                }
-            }
-            CallEvent.CallState.ENDED -> {
-                if (isInCall) {
-                    isInCall = false
-                    callAudioBridge.stopCapture()
-                    callAudioBridge.stopPlayback()
-                    Log.i(TAG, "Call ended — audio bridge stopped")
-                }
-            }
-            else -> {}
-        }
+        // NOTE: Call audio stays on the phone (earpiece / speaker / Bluetooth
+        // such as AirPods). We deliberately do NOT bridge call audio to the Mac:
+        // running the Mac mic->phone and phone->Mac paths alongside the real call
+        // created an acoustic feedback loop (your own voice echoing back seconds
+        // later). The Mac is call CONTROL only — answer, mute, hang up, keypad.
+        // Routing live cellular call audio off a non-system app isn't reliable
+        // on Android anyway. (Audio bridge intentionally disabled.)
+        isInCall = (event.state == CallEvent.CallState.ACTIVE)
     }
 
     // MARK: - Call Controls (Mac → Android)
@@ -100,7 +88,8 @@ class CallBridge(private val context: Context) {
     }
 
     fun handleAudioFromMac(chunk: CallAudioChunk) {
-        callAudioBridge.handleAudioFromMac(chunk)
+        // Audio bridge disabled (see handleCallStateChange) — drop Mac mic audio
+        // so it can't be injected into the call and loop back as echo.
     }
 
     private fun setCallMuted(muted: Boolean) {

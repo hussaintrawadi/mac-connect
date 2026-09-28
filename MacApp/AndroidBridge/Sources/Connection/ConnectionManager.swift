@@ -9,6 +9,15 @@ final class ConnectionManager: ObservableObject {
     @Published var state: ConnectionState = .disconnected
     @Published var phoneBattery: Int = -1          // 0-100, -1 = unknown
     @Published var phoneCharging: Bool = false
+    /// True only when the user explicitly pressed Disconnect. While true we stop
+    /// ALL searching (no browse, no direct-dial, no AirPods retry, no wake search)
+    /// until they press Connect again. Persisted so it survives a Mac restart.
+    @Published var userDisconnected: Bool = false
+    /// True while the phone is linked over the Bluetooth fallback (no Wi-Fi needed).
+    @Published var bluetoothLinked: Bool = false
+
+    private let bluetoothTransport = BluetoothTransport()
+    private var bluetoothSetup = false
 
     private let logger = Logger(subsystem: "com.androidbridge.mac", category: "Connection")
 
@@ -45,12 +54,24 @@ final class ConnectionManager: ObservableObject {
     func start() {
         logger.info("ConnectionManager starting")
         loadPairedDevice()
+        userDisconnected = UserDefaults.standard.bool(forKey: "user_disconnected")
         setupCallHUDObserver()
+        setupWakeObserver()
 
-        if pairedDeviceId != nil {
+        // Only bring up the Bluetooth fallback when a phone is actually paired — and
+        // it stays off while we're connected over Wi-Fi (see onConnected). This stops
+        // the continuous BLE scanning that was contending with AirPods audio.
+        if pairedDeviceId != nil && !userDisconnected {
+            setupBluetooth()
+        }
+
+        if pairedDeviceId != nil && !userDisconnected {
             startBrowsing()
         } else {
-            logger.info("No paired device found — waiting for pairing")
+            let reason = userDisconnected
+                ? "User previously disconnected — idle until Connect is pressed"
+                : "No paired device found — waiting for pairing"
+            logger.info("\(reason)")
             state = .disconnected
         }
     }
@@ -101,6 +122,9 @@ final class ConnectionManager: ObservableObject {
         logger.info("ConnectionManager stopping")
         stopHeartbeat()
         stopDirectDialFallback()
+        bluetoothTransport.stop()
+        idleRetryTimer?.cancel(); idleRetryTimer = nil
+        activeSearchStart = nil
         transport = nil
         connection?.cancel()
         connection = nil
@@ -119,6 +143,15 @@ final class ConnectionManager: ObservableObject {
 
     private var fallbackTimer: DispatchSourceTimer?
 
+    // AirPods-style search budget: search hard for a short burst, then back off to
+    // occasional retries instead of hammering the radio all night when the phone
+    // is off. A fresh burst is triggered instantly when the Mac wakes.
+    private var idleRetryTimer: DispatchSourceTimer?
+    private var activeSearchStart: Date?
+    private let activeSearchDuration: TimeInterval = 150   // ~2.5 min of active searching
+    private let idleRetryInterval: TimeInterval = 900      // then retry every 15 min
+    private var wakeObserverSet = false
+
     /// Same as Android's `derivePort` (Java String.hashCode semantics).
     private var derivedPhonePort: UInt16? {
         guard let macId = KeychainHelper.load(key: "mac_device_id") else { return nil }
@@ -134,6 +167,12 @@ final class ConnectionManager: ObservableObject {
         timer.schedule(deadline: .now() + 6, repeating: 8)
         timer.setEventHandler { [weak self] in
             guard let self else { return }
+            // Budget exhausted? Stop the aggressive search and back off.
+            if let started = self.activeSearchStart,
+               Date().timeIntervalSince(started) > self.activeSearchDuration {
+                self.enterIdleBackoff()
+                return
+            }
             guard case .searching = self.state else { return }
             guard let ip = KeychainHelper.load(key: "last_phone_ip"),
                   let port = self.derivedPhonePort,
@@ -150,6 +189,77 @@ final class ConnectionManager: ObservableObject {
         fallbackTimer = nil
     }
 
+    /// Give up the active search burst and schedule an occasional retry, so we're
+    /// not draining battery searching all night when the phone is off/away.
+    private func enterIdleBackoff() {
+        logger.info("No phone found in \(Int(self.activeSearchDuration))s — backing off, retrying every \(Int(self.idleRetryInterval / 60))min")
+        browser?.cancel(); browser = nil
+        stopDirectDialFallback()
+        activeSearchStart = nil
+        idleRetryTimer?.cancel()
+        let t = DispatchSource.makeTimerSource(queue: queue)
+        t.schedule(deadline: .now() + idleRetryInterval)
+        t.setEventHandler { [weak self] in
+            guard let self, self.pairedDeviceId != nil else { return }
+            if case .connected = self.state { return }
+            self.startBrowsing()
+        }
+        t.resume()
+        idleRetryTimer = t
+    }
+
+    /// Start a brand-new search burst immediately (Mac woke, network changed, or
+    /// the user asked). Resets the budget so it searches hard again — this is the
+    /// "open the laptop and it reconnects" behaviour.
+    func beginFreshSearch() {
+        guard pairedDeviceId != nil, !userDisconnected else { return }
+        if case .connected = state { return }
+        activeSearchStart = nil
+        idleRetryTimer?.cancel(); idleRetryTimer = nil
+        startBrowsing()
+    }
+
+    // MARK: - Bluetooth fallback
+
+    private func setupBluetooth() {
+        bluetoothTransport.onEnvelope = { [weak self] env in
+            self?.queue.async { self?.handleEnvelope(env) }
+        }
+        bluetoothTransport.onLinkChange = { [weak self] linked in
+            guard let self else { return }
+            DispatchQueue.main.async { self.bluetoothLinked = linked }
+            if linked {
+                self.logger.info("Bluetooth link up — sending handshake")
+                self.sendHandshakeOverBluetooth()
+            }
+        }
+        bluetoothSetup = true
+        bluetoothTransport.start()
+    }
+
+    private func sendHandshakeOverBluetooth() {
+        let macDeviceId = KeychainHelper.load(key: "mac_device_id") ?? "unknown"
+        var hs = ABHandshake()
+        hs.deviceID = macDeviceId
+        hs.deviceName = Host.current().localizedName ?? "Mac"
+        hs.protocolVersion = 1
+        var env = ABEnvelope()
+        env.handshake = hs
+        bluetoothTransport.send(env)
+    }
+
+    private func setupWakeObserver() {
+        guard !wakeObserverSet else { return }
+        wakeObserverSet = true
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            guard let self else { return }
+            self.logger.info("Mac woke — starting a fresh search burst")
+            self.queue.async { self.beginFreshSearch() }
+        }
+    }
+
     /// Remember the phone's IP so the next reconnect can skip discovery.
     private func rememberPhoneAddress(of connection: NWConnection) {
         guard let remote = connection.currentPath?.remoteEndpoint,
@@ -162,8 +272,17 @@ final class ConnectionManager: ObservableObject {
     }
 
     func startBrowsing() {
+        // Honour an explicit user disconnect — no searching until they press Connect.
+        guard !userDisconnected else {
+            logger.info("startBrowsing skipped — user is disconnected")
+            return
+        }
         browser?.cancel()
         state = .searching
+        // Keep the same start time across reconnect cycles so the burst budget
+        // accumulates (only a fresh search / wake resets it).
+        if activeSearchStart == nil { activeSearchStart = Date() }
+        idleRetryTimer?.cancel(); idleRetryTimer = nil
         logger.info("Starting mDNS browse for _androidbridge._tcp")
         startDirectDialFallback()
 
@@ -230,6 +349,8 @@ final class ConnectionManager: ObservableObject {
                 self.reconnectAttempt = 0
                 self.isReconnecting = false
                 self.stopDirectDialFallback()
+                self.idleRetryTimer?.cancel(); self.idleRetryTimer = nil
+                self.activeSearchStart = nil
                 self.rememberPhoneAddress(of: connection)
                 self.onConnected(connection)
             case .failed(let error):
@@ -289,8 +410,12 @@ final class ConnectionManager: ObservableObject {
         transport.startReceiving()
         startHeartbeat()
 
+        // We're on Wi-Fi now — shut the Bluetooth fallback down completely so it
+        // isn't scanning the radio (which was stuttering AirPods audio).
+        bluetoothTransport.stop()
         DispatchQueue.main.async {
             self.clipboardFeature.startMonitoring()
+            self.bluetoothLinked = false
             self.state = .connected(deviceName: "Android Device")
         }
     }
@@ -329,6 +454,8 @@ final class ConnectionManager: ObservableObject {
     // MARK: - Reconnect
 
     private func scheduleReconnect() {
+        // Never reconnect after an explicit user disconnect.
+        guard !userDisconnected else { return }
         // Guard against multiple simultaneous reconnect triggers (heartbeat +
         // onDisconnect + connection.failed can all fire at once).
         guard !isReconnecting else { return }
@@ -338,6 +465,12 @@ final class ConnectionManager: ObservableObject {
         connection = nil
         transport = nil
         stopHeartbeat()
+
+        // Wi-Fi link dropped — bring the Bluetooth fallback back up (bursty scan) so
+        // notifications/calls/SMS can still reach the Mac while Wi-Fi is unavailable.
+        if pairedDeviceId != nil {
+            if !bluetoothSetup { setupBluetooth() } else { bluetoothTransport.start() }
+        }
 
         DispatchQueue.main.async {
             self.state = .reconnecting
@@ -356,6 +489,7 @@ final class ConnectionManager: ObservableObject {
 
     func sendEnvelope(_ envelope: ABEnvelope) {
         transport?.send(envelope)
+        if bluetoothTransport.isLinked { bluetoothTransport.send(envelope) }
     }
 
     /// Ask the phone to start screen capture (shows its one-tap consent dialog
@@ -370,15 +504,68 @@ final class ConnectionManager: ObservableObject {
         logger.info("Requested mirror start from phone")
     }
 
-    /// Ask the phone to stop its background service (saves phone battery). The phone
-    /// must be re-enabled from the phone's "Connect" button afterwards.
+    /// Tell the phone to stop screen capture (mirror window was closed) so it can
+    /// sleep again and stop draining battery / burning the display.
+    func requestMirrorStop() {
+        var control = ABConnectionControl()
+        control.action = .stopMirror
+        var envelope = ABEnvelope()
+        envelope.connectionControl = control
+        sendEnvelope(envelope)
+        logger.info("Requested mirror stop")
+    }
+
+    /// User pressed Disconnect. This is a HARD stop: tell the phone to drop its
+    /// service, then shut down all of our own searching — no browse, no direct-dial,
+    /// no AirPods idle-retry, no wake-triggered search — until Connect is pressed.
     func requestPhoneDisconnect() {
+        userDisconnected = true
+        UserDefaults.standard.set(true, forKey: "user_disconnected")
+
+        // Ask the phone to stop its background service (saves phone battery too).
         var control = ABConnectionControl()
         control.action = .disconnect
         var envelope = ABEnvelope()
         envelope.connectionControl = control
         sendEnvelope(envelope)
-        logger.info("Sent disconnect request to phone")
+        logger.info("User pressed Disconnect — stopping all searching/AirPods retries")
+
+        // Also drop the Bluetooth fallback.
+        bluetoothTransport.stop()
+        DispatchQueue.main.async { self.bluetoothLinked = false }
+
+        queue.async { [weak self] in
+            guard let self else { return }
+            self.stopHeartbeat()
+            self.stopDirectDialFallback()
+            self.idleRetryTimer?.cancel(); self.idleRetryTimer = nil
+            self.activeSearchStart = nil
+            self.isReconnecting = false
+            self.transport = nil
+            self.connection?.cancel(); self.connection = nil
+            self.browser?.cancel(); self.browser = nil
+            DispatchQueue.main.async { self.state = .disconnected }
+        }
+    }
+
+    /// User pressed Connect. Clear the disconnect latch and start a fresh AirPods-style
+    /// search burst immediately.
+    func connectPhone() {
+        userDisconnected = false
+        UserDefaults.standard.set(false, forKey: "user_disconnected")
+        logger.info("User pressed Connect — resuming search")
+        if !bluetoothSetup { setupBluetooth() } else { bluetoothTransport.start() }
+        queue.async { [weak self] in self?.beginFreshSearch() }
+    }
+
+    /// Find My Phone: make the phone ring loudly (even in silent mode) until stopped.
+    func requestFindPhone(start: Bool) {
+        var find = ABFindDevice()
+        find.start = start
+        var envelope = ABEnvelope()
+        envelope.findDevice = find
+        sendEnvelope(envelope)
+        logger.info("Find My Phone: \(start ? "start ringing" : "stop")")
     }
 
     // MARK: - Call HUD
@@ -497,6 +684,10 @@ extension ConnectionManager: MessageHandler {
         case .fileListResponse(let response):
             logger.info("File list: \(response.entries.count) entries in \(response.path)")
             fileSystemFeature.handleListResponse(response)
+
+        case .fileUploadRequest(let request):
+            logger.info("Incoming AirDrop from phone: \(request.fileName)")
+            fileSystemFeature.handleIncomingUpload(request)
 
         case .fileChunk(let chunk):
             fileSystemFeature.handleFileChunk(chunk)

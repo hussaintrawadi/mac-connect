@@ -123,3 +123,22 @@ caveats for each area.
 | Unlock the phone with Mac Touch ID | No Android API exposes biometric unlock to apps |
 | See the secure lock screen in the mirror | Android blocks screen capture of secure surfaces |
 | Skip the phone's screen‑capture tap | Android enforces consent for every capture session |
+
+---
+
+## New in 1.0.1
+
+- **Two-way file sharing.** Mac to phone: the menu-bar panel opens a drop window
+  (`AirDropSendView`), and files stream to the phone's Downloads. Phone to Mac: a share
+  target (`ShareReceiverActivity`) sends any file to the Mac's Downloads and reveals it in Finder.
+- **Bluetooth LE fallback.** When Wi-Fi cannot carry the link, the phone advertises a GATT
+  service (`BleServer`) and the Mac connects with `BluetoothTransport`. Only notifications,
+  call events and SMS travel over it. Bluetooth is off while Wi-Fi is up.
+- **Find My Phone.** `FindPhoneAlarm` forces the alarm stream to full volume (restored afterwards),
+  vibrates, and shows `FindPhoneActivity` over the lock screen. It auto-stops after a minute.
+- **Connect and Disconnect.** Disconnect is a hard stop that is remembered across restarts.
+  Otherwise the Mac searches for about 2.5 minutes, then retries every 15 minutes, and searches
+  again immediately on wake.
+- **Burn-in and battery.** Closing the mirror sends `STOP_MIRROR`, and while mirroring the phone
+  backlight is driven near minimum. Clipboard and media polling slowed down when idle.
+- **Signing.** Release APKs are signed with v1, v2, v3 and v4 schemes.

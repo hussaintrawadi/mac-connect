@@ -23,6 +23,10 @@ final class CallFeature: ObservableObject {
     private var audioEngine: AVAudioEngine?
     private var playerNode: AVAudioPlayerNode?
     private var audioFormat: AVAudioFormat?
+    // Serializes all audio-engine access. Incoming chunks arrive on the network
+    // queue while teardown happens on main — without this, a late chunk could
+    // call play() on a stopped engine and crash (uncatchable ObjC exception).
+    private let audioQueue = DispatchQueue(label: "com.androidbridge.mac.callaudio")
 
     enum CallState {
         case idle, ringing, active, held, dialing
@@ -44,7 +48,9 @@ final class CallFeature: ObservableObject {
             case .active:
                 self.callState = .active
                 self.startCallTimer()
-                self.startAudioEngine()
+                // Call audio intentionally stays on the phone (earpiece / speaker /
+                // Bluetooth like AirPods). Bridging mic+audio to the Mac alongside
+                // the live call caused an echo/feedback loop. Mac = control only.
                 self.logger.info("Call active with \(self.callerName)")
 
             case .ended:
@@ -72,70 +78,81 @@ final class CallFeature: ObservableObject {
     // MARK: - Audio from Android → Mac Speaker
 
     func handleAudioChunk(_ chunk: ABCallAudioChunk) {
-        guard let playerNode, let audioFormat else { return }
-
         let data = chunk.opusData
         guard !data.isEmpty else { return }
 
-        // Convert PCM bytes to audio buffer
-        let frameCount = AVAudioFrameCount(data.count / 2) // 16-bit = 2 bytes per sample
-        guard let buffer = AVAudioPCMBuffer(pcmFormat: audioFormat, frameCapacity: frameCount) else { return }
-        buffer.frameLength = frameCount
+        // Run on the audio queue so we never overlap with teardown, and only
+        // touch the player while its engine is actually running.
+        audioQueue.async { [weak self] in
+            guard let self,
+                  let engine = self.audioEngine, engine.isRunning,
+                  let playerNode = self.playerNode,
+                  let audioFormat = self.audioFormat else { return }
 
-        data.withUnsafeBytes { rawBuf in
-            guard let src = rawBuf.baseAddress?.assumingMemoryBound(to: Int16.self) else { return }
-            guard let dst = buffer.int16ChannelData?[0] else { return }
-            for i in 0..<Int(frameCount) {
-                dst[i] = src[i]
+            let frameCount = AVAudioFrameCount(data.count / 2) // 16-bit = 2 bytes per sample
+            guard frameCount > 0,
+                  let buffer = AVAudioPCMBuffer(pcmFormat: audioFormat, frameCapacity: frameCount) else { return }
+            buffer.frameLength = frameCount
+
+            data.withUnsafeBytes { rawBuf in
+                guard let src = rawBuf.baseAddress?.assumingMemoryBound(to: Int16.self) else { return }
+                guard let dst = buffer.int16ChannelData?[0] else { return }
+                for i in 0..<Int(frameCount) { dst[i] = src[i] }
             }
-        }
 
-        playerNode.scheduleBuffer(buffer, completionHandler: nil)
-        if !playerNode.isPlaying {
-            playerNode.play()
+            playerNode.scheduleBuffer(buffer, completionHandler: nil)
+            if engine.isRunning, !playerNode.isPlaying {
+                playerNode.play()
+            }
         }
     }
 
     // MARK: - Mac Mic → Android
 
     private func startAudioEngine() {
-        let engine = AVAudioEngine()
-        let player = AVAudioPlayerNode()
+        audioQueue.async { [weak self] in
+            guard let self, self.audioEngine == nil else { return }
+            let engine = AVAudioEngine()
+            let player = AVAudioPlayerNode()
 
-        let format = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 16000, channels: 1, interleaved: true)!
-        audioFormat = format
+            let format = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 16000, channels: 1, interleaved: true)!
 
-        engine.attach(player)
-        engine.connect(player, to: engine.mainMixerNode, format: format)
+            engine.attach(player)
+            engine.connect(player, to: engine.mainMixerNode, format: format)
 
-        // Capture Mac mic
-        let inputNode = engine.inputNode
-        let inputFormat = inputNode.outputFormat(forBus: 0)
+            let inputNode = engine.inputNode
+            let inputFormat = inputNode.outputFormat(forBus: 0)
+            inputNode.installTap(onBus: 0, bufferSize: 640, format: inputFormat) { [weak self] buffer, _ in
+                self?.processMicBuffer(buffer, inputFormat: inputFormat)
+            }
 
-        // Install tap on input to capture mic audio
-        let captureFormat = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 16000, channels: 1, interleaved: true)!
-
-        inputNode.installTap(onBus: 0, bufferSize: 640, format: inputFormat) { [weak self] buffer, time in
-            self?.processMicBuffer(buffer, inputFormat: inputFormat)
-        }
-
-        do {
-            try engine.start()
-            audioEngine = engine
-            playerNode = player
-            logger.info("Audio engine started")
-        } catch {
-            logger.error("Failed to start audio engine: \(error.localizedDescription)")
+            do {
+                try engine.start()
+                self.audioFormat = format
+                self.audioEngine = engine
+                self.playerNode = player
+                self.logger.info("Audio engine started")
+            } catch {
+                engine.inputNode.removeTap(onBus: 0)
+                self.logger.error("Failed to start audio engine: \(error.localizedDescription)")
+            }
         }
     }
 
     private func stopAudioEngine() {
-        audioEngine?.inputNode.removeTap(onBus: 0)
-        playerNode?.stop()
-        audioEngine?.stop()
-        audioEngine = nil
-        playerNode = nil
-        audioFormat = nil
+        // Serialized with chunk handling + start so we never tear the engine down
+        // mid-playback (which throws an uncatchable exception → crash).
+        audioQueue.async { [weak self] in
+            guard let self else { return }
+            if let engine = self.audioEngine {
+                engine.inputNode.removeTap(onBus: 0)
+                self.playerNode?.stop()
+                engine.stop()
+            }
+            self.audioEngine = nil
+            self.playerNode = nil
+            self.audioFormat = nil
+        }
     }
 
     private func processMicBuffer(_ buffer: AVAudioPCMBuffer, inputFormat: AVAudioFormat) {

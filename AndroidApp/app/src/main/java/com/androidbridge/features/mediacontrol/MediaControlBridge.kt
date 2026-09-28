@@ -36,8 +36,10 @@ class MediaControlBridge(private val context: Context) {
         pollThread = Thread({
             while (isRunning) {
                 try {
-                    checkActiveSessions()
-                    Thread.sleep(1200)
+                    val active = checkActiveSessions()
+                    // Poll quickly while something is playing (responsive controls),
+                    // but slow right down when idle to save battery.
+                    Thread.sleep(if (active) 1500 else 4000)
                 } catch (_: InterruptedException) {
                     break
                 }
@@ -53,14 +55,15 @@ class MediaControlBridge(private val context: Context) {
         pollThread = null
     }
 
-    private fun checkActiveSessions() {
+    /** Returns true if something is currently playing (used to pace polling). */
+    private fun checkActiveSessions(): Boolean {
         val sessions = try {
             sessionManager?.getActiveSessions(
                 ComponentName(context, "com.androidbridge.features.notifications.BridgeNotificationListener")
             )
         } catch (e: SecurityException) {
             Log.w(TAG, "No notification listener permission for media sessions")
-            return
+            return false
         }
 
         // Valid = has metadata and isn't stopped/none/error.
@@ -83,11 +86,12 @@ class MediaControlBridge(private val context: Context) {
                 activeController = null
                 sendEmptyState()
             }
-            return
+            return false
         }
 
         activeController = controller
         sendMediaState(controller)
+        return controller.playbackState?.state == PlaybackState.STATE_PLAYING
     }
 
     private fun sendMediaState(controller: MediaController) {

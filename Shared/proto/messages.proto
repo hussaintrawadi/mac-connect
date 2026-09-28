@@ -73,6 +73,7 @@ message Envelope {
     GalleryAlbumsResponse gallery_albums_response = 128;
     FileOperation file_operation = 129;
     FileOperationResult file_operation_result = 130;
+    FindDevice find_device = 131;
   }
 }
 
@@ -476,8 +477,17 @@ message ConnectionControl {
   enum Action {
     DISCONNECT = 0;
     START_MIRROR = 1;   // Mac asks the phone to begin screen capture
+    STOP_MIRROR = 2;    // Mac closed the mirror — phone stops capture (saves battery, lets it sleep)
   }
   Action action = 1;
+}
+
+// ---------------------------------------------------------------------------
+// Find My Phone (Mac → phone): ring loudly even in silent mode, until stopped
+// ---------------------------------------------------------------------------
+
+message FindDevice {
+  bool start = 1;   // true = start the alarm, false = stop it
 }
 
 // ---------------------------------------------------------------------------

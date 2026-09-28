@@ -9,7 +9,8 @@ final class StatusBarController {
     private let connectionManager: ConnectionManager
     private var cancellables = Set<AnyCancellable>()
     private let logger = Logger(subsystem: "com.androidbridge.mac", category: "StatusBar")
-    private let popover = NSPopover()
+    private var panel: NSPanel?
+    private var eventMonitor: Any?
 
     init(connectionManager: ConnectionManager) {
         self.connectionManager = connectionManager
@@ -26,36 +27,93 @@ final class StatusBarController {
         image?.isTemplate = true
         button.image = image
         button.target = self
-        button.action = #selector(togglePopover)
+        button.action = #selector(togglePanel)
+    }
 
-        // Premium custom dropdown panel instead of the plain native menu.
-        let view = MenuBarPopoverView(
+    /// The dropdown content — shared verbatim with the main app window so both
+    /// look identical.
+    private func makePanelView() -> MenuBarPopoverView {
+        MenuBarPopoverView(
             connectionManager: connectionManager,
-            onMirror: { [weak self] in self?.popover.performClose(nil); self?.mirrorScreen() },
-            onMessages: { [weak self] in self?.popover.performClose(nil); self?.openSMS() },
-            onFiles: { [weak self] in self?.popover.performClose(nil); self?.openFiles() },
-            onGallery: { [weak self] in self?.popover.performClose(nil); self?.openGallery() },
-            onPhone: { [weak self] in self?.popover.performClose(nil); self?.openDialPad() },
-            onPair: { [weak self] in self?.popover.performClose(nil); self?.pairDevice() },
-            onDisconnect: { [weak self] in self?.popover.performClose(nil); self?.disconnectPhone() },
+            notifications: connectionManager.notificationFeature,
+            onMirror: { [weak self] in self?.closePanel(); self?.mirrorScreen() },
+            onMessages: { [weak self] in self?.closePanel(); self?.openSMS() },
+            onFiles: { [weak self] in self?.closePanel(); self?.openFiles() },
+            onGallery: { [weak self] in self?.closePanel(); self?.openGallery() },
+            onPhone: { [weak self] in self?.closePanel(); self?.openDialPad() },
+            onFindPhone: { [weak self] in self?.findPhone() },
+            onSendToPhone: { [weak self] in self?.closePanel(); self?.openAirDrop() },
+            onPair: { [weak self] in self?.closePanel(); self?.pairDevice() },
+            onConnect: { [weak self] in self?.connectPhone() },
+            onDisconnect: { [weak self] in self?.disconnectPhone() },
             onSettings: { [weak self] in
-                self?.popover.performClose(nil)
+                self?.closePanel()
                 NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
             },
             onQuit: { NSApp.terminate(nil) }
         )
-        popover.contentViewController = NSHostingController(rootView: view)
-        popover.behavior = .transient
     }
 
-    @objc private func togglePopover() {
-        guard let button = statusItem.button else { return }
-        if popover.isShown {
-            popover.performClose(nil)
-        } else {
-            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-            popover.contentViewController?.view.window?.makeKey()
+    @objc private func togglePanel() {
+        if panel != nil { closePanel() } else { showPanel() }
+    }
+
+    private func showPanel() {
+        guard let button = statusItem.button, let buttonWindow = button.window else { return }
+
+        let hosting = NSHostingView(rootView:
+            makePanelView()
+                .background(VisualEffectBackground())
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        )
+        hosting.setFrameSize(hosting.fittingSize)
+        let size = hosting.fittingSize
+
+        // A non-activating panel that CAN become key: it stays put and its controls
+        // stay clickable even over another app's full-screen Space (the old transient
+        // popover dismissed itself the moment the cursor moved onto it in full screen).
+        let panel = MenuBarPanel(
+            contentRect: NSRect(origin: .zero, size: size),
+            styleMask: [.nonactivatingPanel, .borderless],
+            backing: .buffered,
+            defer: false
+        )
+        panel.contentView = hosting
+        panel.isFloatingPanel = true
+        panel.level = .popUpMenu
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        panel.hidesOnDeactivate = false
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = true
+
+        // Position just under the status item, right-aligned and clamped on-screen.
+        let buttonRect = buttonWindow.convertToScreen(button.convert(button.bounds, to: nil))
+        var x = buttonRect.maxX - size.width
+        let y = buttonRect.minY - size.height - 6
+        if let screen = buttonWindow.screen {
+            x = max(screen.visibleFrame.minX + 8, min(x, screen.visibleFrame.maxX - size.width - 8))
         }
+        panel.setFrameOrigin(NSPoint(x: x, y: y))
+        panel.makeKeyAndOrderFront(nil)
+        panel.orderFrontRegardless()
+
+        self.panel = panel
+        button.highlight(true)
+
+        // Dismiss on a click anywhere OUTSIDE the panel (incl. the full-screen app
+        // behind it). Clicks inside the panel are local events and don't fire this,
+        // so its buttons/sliders stay fully interactive.
+        eventMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
+            self?.closePanel()
+        }
+    }
+
+    private func closePanel() {
+        if let m = eventMonitor { NSEvent.removeMonitor(m); eventMonitor = nil }
+        panel?.orderOut(nil)
+        panel = nil
+        statusItem.button?.highlight(false)
     }
 
     private func buildMenu() {
@@ -208,6 +266,18 @@ final class StatusBarController {
         connectionManager.requestPhoneDisconnect()
     }
 
+    @objc private func connectPhone() {
+        connectionManager.connectPhone()
+    }
+
+    /// Ring the phone (Find My Phone). The phone shows a full-screen "Stop" screen;
+    /// the alarm also auto-stops after a minute, so the Mac just fires the start.
+    private var findPhoneRinging = false
+    private func findPhone() {
+        findPhoneRinging.toggle()
+        connectionManager.requestFindPhone(start: findPhoneRinging)
+    }
+
     @objc private func mediaPrevious() { connectionManager.mediaControlFeature.previous() }
     @objc private func mediaPlayPause() { connectionManager.mediaControlFeature.togglePlayPause() }
     @objc private func mediaNext() { connectionManager.mediaControlFeature.next() }
@@ -246,6 +316,7 @@ final class StatusBarController {
     }
 
     private var mirrorWindow: NSWindow?
+    private var mirrorCloseObserver: MirrorWindowCloseObserver?
 
     @objc private func mirrorScreen() {
         // Seeing/controlling the phone is sensitive — require Touch ID
@@ -296,6 +367,17 @@ final class StatusBarController {
         window.makeKeyAndOrderFront(nil)
         window.isReleasedWhenClosed = false
         NSApp.activate(ignoringOtherApps: true)
+
+        // When the user closes the mirror, tell the phone to STOP capturing so it
+        // can sleep again (no more screen burn / battery drain from encoding).
+        let observer = MirrorWindowCloseObserver { [weak self] in
+            self?.connectionManager.requestMirrorStop()
+            self?.mirrorCancellables.removeAll()
+            self?.mirrorWindow = nil
+            self?.mirrorCloseObserver = nil
+        }
+        window.delegate = observer
+        mirrorCloseObserver = observer
 
         mirrorWindow = window
 
@@ -444,6 +526,48 @@ final class StatusBarController {
         dialPadWindow = window
     }
 
+    private var airDropWindow: NSWindow?
+
+    @objc private func openAirDrop() {
+        logger.info("Opening AirDrop send window")
+
+        if airDropWindow != nil {
+            airDropWindow?.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+
+        let view = AirDropSendView(fileSystem: connectionManager.fileSystemFeature) { [weak self] urls in
+            self?.sendFilesToPhone(urls)
+        }
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 420, height: 400),
+            styleMask: [.titled, .closable, .resizable, .miniaturizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentView = NSHostingView(rootView: view)
+        window.title = "Send to Phone"
+        window.center()
+        window.makeKeyAndOrderFront(nil)
+        window.isReleasedWhenClosed = false
+        NSApp.activate(ignoringOtherApps: true)
+
+        let observer = MirrorWindowCloseObserver { [weak self] in self?.airDropWindow = nil }
+        window.delegate = observer
+        airDropCloseObserver = observer
+        airDropWindow = window
+    }
+
+    private var airDropCloseObserver: MirrorWindowCloseObserver?
+
+    /// Send each picked/dropped file to the phone's Downloads (AirDrop-style).
+    private func sendFilesToPhone(_ urls: [URL]) {
+        for url in urls {
+            connectionManager.fileSystemFeature.uploadFile(from: url, toPath: "", shareAfter: false)
+        }
+    }
+
     // MARK: - Public Triggers (for dashboard buttons)
 
     func triggerMirrorScreen() { mirrorScreen() }
@@ -451,4 +575,21 @@ final class StatusBarController {
     func triggerOpenFiles() { openFiles() }
     func triggerOpenGallery() { openGallery() }
     func triggerOpenDialPad() { openDialPad() }
+    func triggerFindPhone() { findPhone() }
+    func triggerSendToPhone() { openAirDrop() }
+}
+
+/// Fires a callback when the mirror window is closed, so the phone can be told
+/// to stop capturing (lets it sleep, saves battery, prevents AMOLED burn).
+final class MirrorWindowCloseObserver: NSObject, NSWindowDelegate {
+    private let onClose: () -> Void
+    init(onClose: @escaping () -> Void) { self.onClose = onClose }
+    func windowWillClose(_ notification: Notification) { onClose() }
+}
+
+/// A borderless, non-activating panel that CAN become key — so the menu-bar
+/// dropdown stays clickable, even floating over another app's full-screen Space.
+final class MenuBarPanel: NSPanel {
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { false }
 }

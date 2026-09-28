@@ -14,8 +14,8 @@ android {
         applicationId = "com.androidbridge"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "1.0.1"
     }
 
     // Release signing is read from keystore.properties (gitignored) or the
@@ -40,6 +40,12 @@ android {
                 storePassword = cfg("storePassword", "MC_KEYSTORE_PASSWORD")
                 keyAlias = cfg("keyAlias", "MC_KEY_ALIAS")
                 keyPassword = cfg("keyPassword", "MC_KEY_PASSWORD")
+                // Full signing (v1 JAR + v2 + v3 + v4) — proper hygiene, reduces
+                // "tampered app" flags from Play Protect / installers.
+                enableV1Signing = true
+                enableV2Signing = true
+                enableV3Signing = true
+                enableV4Signing = true
             }
         }
     }

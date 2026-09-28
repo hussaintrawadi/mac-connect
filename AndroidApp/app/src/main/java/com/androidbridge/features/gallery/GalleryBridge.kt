@@ -173,8 +173,12 @@ class GalleryBridge(private val context: Context) {
         val cursor = resolver.query(collection, projection, selection, args, sortOrder)
             ?: return Pair(items, 0)
 
+        // First pass: read the (cheap) row metadata. Thumbnails are decoded
+        // afterwards, in parallel — that's the real speed-up.
+        val rows = mutableListOf<Row>()
+        var total = 0
         cursor.use {
-            val total = it.count
+            total = it.count
             if (offset >= total || !it.moveToPosition(offset)) return Pair(items, total)
 
             val idCol = it.getColumnIndexOrThrow(MediaStore.Files.FileColumns._ID)
@@ -195,30 +199,71 @@ class GalleryBridge(private val context: Context) {
                 val date = it.getLong(dateCol) * 1000L  // DATE_ADDED is seconds
                 val size = it.getLong(sizeCol)
                 val path = it.getString(dataCol) ?: ""
-                val w = it.getInt(wCol)
-                val h = it.getInt(hCol)
-
                 if (path.isEmpty()) { count++; continue }
-
-                val builder = GalleryItem.newBuilder()
-                    .setId(id.toString())
-                    .setPath(path)
-                    .setName(name)
-                    .setDateTakenMs(date)
-                    .setSizeBytes(size)
-                    .setIsVideo(isVideo)
-                    .setWidth(w)
-                    .setHeight(h)
-
-                makeThumbnail(path, isVideo)?.let { thumb -> builder.thumbnail = ByteString.copyFrom(thumb) }
-                items.add(builder.build())
+                rows.add(Row(id, name, date, size, path, it.getInt(wCol), it.getInt(hCol), isVideo))
                 count++
             } while (it.moveToNext())
+        }
 
-            return Pair(items, total)
+        // Decode thumbnails concurrently across a small pool (the old code did them
+        // sequentially on one thread, which is why the gallery felt slow to open).
+        val threads = Runtime.getRuntime().availableProcessors().coerceIn(2, 6)
+        val pool = java.util.concurrent.Executors.newFixedThreadPool(threads)
+        try {
+            val built = rows.map { row ->
+                pool.submit(java.util.concurrent.Callable {
+                    val b = GalleryItem.newBuilder()
+                        .setId(row.id.toString())
+                        .setPath(row.path)
+                        .setName(row.name)
+                        .setDateTakenMs(row.date)
+                        .setSizeBytes(row.size)
+                        .setIsVideo(row.isVideo)
+                        .setWidth(row.w)
+                        .setHeight(row.h)
+                    makeThumbnail(row.id, row.path, row.isVideo)?.let { b.thumbnail = ByteString.copyFrom(it) }
+                    b.build()
+                })
+            }.map { it.get() }
+            items.addAll(built)
+        } finally {
+            pool.shutdown()
+        }
+        return Pair(items, total)
+    }
+
+    private data class Row(
+        val id: Long, val name: String, val date: Long, val size: Long,
+        val path: String, val w: Int, val h: Int, val isVideo: Boolean
+    )
+
+    private fun makeThumbnail(id: Long, path: String, isVideo: Boolean): ByteArray? {
+        return try {
+            // Prefer the OS thumbnail cache (instant when warm) over decoding the
+            // full file; fall back to manual decode on older devices / cache misses.
+            val bmp = loadCachedThumbnail(id) ?: (if (isVideo) videoThumbnail(path) else imageThumbnail(path))
+            if (bmp == null) return null
+            val stream = ByteArrayOutputStream()
+            bmp.compress(Bitmap.CompressFormat.JPEG, 72, stream)
+            bmp.recycle()
+            stream.toByteArray()
+        } catch (e: Exception) {
+            Log.w(TAG, "Thumbnail failed: $path", e)
+            null
         }
     }
 
+    private fun loadCachedThumbnail(id: Long): Bitmap? {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return null
+        return try {
+            val uri = android.content.ContentUris.withAppendedId(collection, id)
+            context.contentResolver.loadThumbnail(uri, Size(256, 256), null)
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /** Path-only thumbnail (used for album covers, where we don't have a MediaStore id). */
     private fun makeThumbnail(path: String, isVideo: Boolean): ByteArray? {
         return try {
             val bmp = if (isVideo) videoThumbnail(path) else imageThumbnail(path)

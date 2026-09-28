@@ -10,7 +10,7 @@ PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 ANDROID_DIR="$PROJECT_ROOT/AndroidApp"
 OUTPUT_DIR="$PROJECT_ROOT/dist"
 APP_NAME="MacConnect"
-VERSION="1.0.0"
+VERSION="1.0.1"
 
 # Java 17 + Android SDK (Gradle needs JDK 17 on this machine)
 export JAVA_HOME="${JAVA_HOME:-/Library/Java/JavaVirtualMachines/temurin-17.jdk/Contents/Home}"

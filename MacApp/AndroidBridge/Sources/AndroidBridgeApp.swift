@@ -7,11 +7,9 @@ struct AndroidBridgeApp: App {
     var body: some Scene {
         WindowGroup {
             WelcomeView(connectionManager: appDelegate.connectionManager)
-                .frame(minWidth: 400, minHeight: 600)
         }
         .windowStyle(.hiddenTitleBar)
         .windowResizability(.contentSize)
-        .defaultSize(width: 420, height: 640)
         .commands {
             CommandGroup(replacing: .newItem) { }
         }

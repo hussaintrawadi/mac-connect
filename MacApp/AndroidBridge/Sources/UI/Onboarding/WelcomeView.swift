@@ -1,4 +1,53 @@
 import SwiftUI
+import AppKit
+
+/// Resets the app window to hug its SwiftUI content. An earlier build pinned the
+/// window's contentMinSize to 600 (via a `.frame(minHeight:)`); macOS persists that,
+/// so the window refuses to shrink below it. This clears the stale minimum, locks
+/// the window to the content's fitting size, and disables frame restore so a stale
+/// (taller) frame can't come back on the next launch.
+/// Measures the panel content's real height so the window can be sized to it exactly.
+private struct PanelHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
+}
+
+/// Drives the app window to an exact size (fixed width × measured content height),
+/// anchored at the top edge. Deterministic — no reliance on SwiftUI's content-size
+/// heuristics, which kept fighting the title-bar safe area. Also disables frame
+/// restore/autosave so a stale (taller) frame can't come back.
+struct WindowConfigurator: NSViewRepresentable {
+    let width: CGFloat
+    let height: CGFloat
+
+    func makeNSView(context: Context) -> NSView { NSView(frame: .zero) }
+
+    func updateNSView(_ v: NSView, context: Context) {
+        let w0 = width, h0 = height
+        DispatchQueue.main.async {
+            guard let w = v.window, h0 > 60 else { return }
+            w.isRestorable = false
+            w.setFrameAutosaveName("")
+            w.titlebarAppearsTransparent = true
+            w.titleVisibility = .hidden
+            w.styleMask.insert(.fullSizeContentView)
+            w.contentMinSize = NSSize(width: 200, height: 60)
+            w.contentMaxSize = NSSize(width: 5000, height: 5000)
+
+            // With fullSizeContentView the SwiftUI content is laid out below the title
+            // bar (contentLayoutRect), so the window frame = title-bar height + content.
+            var titleBar = w.frame.height - w.contentLayoutRect.height
+            if titleBar < 1 || titleBar > 60 { titleBar = 28 }   // sane fallback
+            let targetH = h0 + titleBar
+            if abs(w.frame.height - targetH) > 0.5 || abs(w.frame.width - w0) > 0.5 {
+                var f = w.frame
+                f.origin.y += (f.height - targetH)   // keep the top edge fixed
+                f.size = NSSize(width: w0, height: targetH)
+                w.setFrame(f, display: true)
+            }
+        }
+    }
+}
 
 // MARK: - Design Tokens
 //
@@ -177,19 +226,57 @@ struct WelcomeView: View {
     @State private var currentPage = 0
     @StateObject private var pairingManager = PairingManager()
     @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
+    @State private var panelHeight: CGFloat = 320
 
     var body: some View {
         Group {
             if !hasCompletedOnboarding {
+                // Onboarding keeps its own fixed size.
                 onboardingFlow
-            } else if !connectionManager.state.isConnected {
-                connectionView
+                    .frame(width: 400, height: 620)
             } else {
-                dashboardView
+                // The main window shows the SAME premium panel as the menu-bar
+                // dropdown — same 320-pt width. Its exact height is measured and the
+                // window is sized to match (see WindowConfigurator).
+                panelView
             }
         }
-        .frame(minWidth: 400, minHeight: 600)
-        .background(.background)
+        // Fill the whole window with the Liquid-Glass material (incl. under the title bar).
+        .background(VisualEffectBackground().ignoresSafeArea())
+    }
+
+    /// The exact menu-bar panel, embedded in the window (320-pt width). A small top
+    /// inset clears the traffic-light buttons; its measured height drives the window.
+    private var panelView: some View {
+        MenuBarPopoverView(
+            connectionManager: connectionManager,
+            notifications: connectionManager.notificationFeature,
+            onMirror: { NotificationCenter.default.post(name: .openMirror, object: nil) },
+            onMessages: { NotificationCenter.default.post(name: .openSMS, object: nil) },
+            onFiles: { NotificationCenter.default.post(name: .openFiles, object: nil) },
+            onGallery: { NotificationCenter.default.post(name: .openGallery, object: nil) },
+            onPhone: { NotificationCenter.default.post(name: .openDialPad, object: nil) },
+            onFindPhone: { NotificationCenter.default.post(name: .findPhone, object: nil) },
+            onSendToPhone: { NotificationCenter.default.post(name: .sendToPhone, object: nil) },
+            onPair: { hasCompletedOnboarding = false; currentPage = 2 },
+            onConnect: { connectionManager.connectPhone() },
+            onDisconnect: { connectionManager.requestPhoneDisconnect() },
+            onSettings: { NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil) },
+            onQuit: { NSApp.terminate(nil) },
+            fillWidth: false
+        )
+        // Pull the content up a touch so the header icon sits close to the traffic
+        // lights (the title-bar area otherwise leaves too big a gap up top). The
+        // measured height below already accounts for this, so the bottom stays snug.
+        .padding(.top, -12)
+        // Content respects the title-bar area (so the icon sits nicely below the
+        // traffic lights); the material still bleeds under the bar via the window
+        // background. We measure the content's real height and size the window to it.
+        .background(GeometryReader { geo in
+            Color.clear.preference(key: PanelHeightKey.self, value: geo.size.height)
+        })
+        .onPreferenceChange(PanelHeightKey.self) { panelHeight = $0 }
+        .background(WindowConfigurator(width: 320, height: panelHeight))
     }
 
     // MARK: - Onboarding (no tab bar — custom page switching)
@@ -762,4 +849,6 @@ extension Notification.Name {
     static let openFiles = Notification.Name("openFiles")
     static let openGallery = Notification.Name("openGallery")
     static let openDialPad = Notification.Name("openDialPad")
+    static let findPhone = Notification.Name("findPhone")
+    static let sendToPhone = Notification.Name("sendToPhone")
 }

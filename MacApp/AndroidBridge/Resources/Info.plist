@@ -13,9 +13,9 @@
     <key>CFBundleIdentifier</key>
     <string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
     <key>CFBundleVersion</key>
-    <string>1</string>
+    <string>2</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.0.0</string>
+    <string>1.0.1</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>LSMinimumSystemVersion</key>
@@ -29,7 +29,7 @@
     <key>NSLocalNetworkUsageDescription</key>
     <string>Mac Connect needs local network access to discover and connect to your Android device on the same Wi-Fi network.</string>
     <key>NSBluetoothAlwaysUsageDescription</key>
-    <string>Mac Connect lets you turn Bluetooth on or off from your phone.</string>
+    <string>Mac Connect uses Bluetooth as a fallback link to your phone (for notifications, calls and SMS) when there’s no Wi-Fi.</string>
     <key>NSBonjourServices</key>
     <array>
         <string>_androidbridge._tcp</string>

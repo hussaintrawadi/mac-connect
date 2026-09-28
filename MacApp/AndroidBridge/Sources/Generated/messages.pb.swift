@@ -396,6 +396,14 @@ nonisolated struct ABEnvelope: Sendable {
     set {payload = .fileOperationResult(newValue)}
   }
 
+  var findDevice: ABFindDevice {
+    get {
+      if case .findDevice(let v)? = payload {return v}
+      return ABFindDevice()
+    }
+    set {payload = .findDevice(newValue)}
+  }
+
   var unknownFields = SwiftProtobuf.UnknownStorage()
 
   nonisolated enum OneOf_Payload: Equatable, Sendable {
@@ -444,6 +452,7 @@ nonisolated struct ABEnvelope: Sendable {
     case galleryAlbumsResponse(ABGalleryAlbumsResponse)
     case fileOperation(ABFileOperation)
     case fileOperationResult(ABFileOperationResult)
+    case findDevice(ABFindDevice)
 
   }
 
@@ -1534,6 +1543,9 @@ nonisolated struct ABConnectionControl: Sendable {
 
     /// Mac asks the phone to begin screen capture
     case startMirror // = 1
+
+    /// Mac closed the mirror — phone stops capture (saves battery, lets it sleep)
+    case stopMirror // = 2
     case UNRECOGNIZED(Int)
 
     init() {
@@ -1544,6 +1556,7 @@ nonisolated struct ABConnectionControl: Sendable {
       switch rawValue {
       case 0: self = .disconnect
       case 1: self = .startMirror
+      case 2: self = .stopMirror
       default: self = .UNRECOGNIZED(rawValue)
       }
     }
@@ -1552,6 +1565,7 @@ nonisolated struct ABConnectionControl: Sendable {
       switch self {
       case .disconnect: return 0
       case .startMirror: return 1
+      case .stopMirror: return 2
       case .UNRECOGNIZED(let i): return i
       }
     }
@@ -1560,9 +1574,23 @@ nonisolated struct ABConnectionControl: Sendable {
     static let allCases: [ABConnectionControl.Action] = [
       .disconnect,
       .startMirror,
+      .stopMirror,
     ]
 
   }
+
+  init() {}
+}
+
+nonisolated struct ABFindDevice: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// true = start the alarm, false = stop it
+  var start: Bool = false
+
+  var unknownFields = SwiftProtobuf.UnknownStorage()
 
   init() {}
 }
@@ -1866,7 +1894,7 @@ fileprivate nonisolated let _protobuf_package = "androidbridge"
 
 nonisolated extension ABEnvelope: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   static let protoMessageName: String = _protobuf_package + ".Envelope"
-  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}sequence\0\u{3}timestamp_ms\0\u{2}\u{8}handshake\0\u{3}handshake_response\0\u{1}heartbeat\0\u{1}ack\0\u{4}\u{7}notification_event\0\u{3}notification_action\0\u{4}\u{9}sms_conversation\0\u{3}sms_message\0\u{3}sms_send\0\u{3}sms_delivery_status\0\u{4}\u{7}clipboard_sync\0\u{3}url_handoff\0\u{4}\u{9}file_list_request\0\u{3}file_list_response\0\u{3}file_download_request\0\u{3}file_upload_request\0\u{3}file_chunk\0\u{3}file_transfer_complete\0\u{3}file_transfer_cancel\0\u{4}\u{4}video_config\0\u{3}video_frame\0\u{4}\u{9}touch_event\0\u{3}key_event\0\u{3}scroll_event\0\u{4}\u{8}call_event\0\u{3}call_control\0\u{3}call_audio_chunk\0\u{4}\u{8}media_state\0\u{3}media_control\0\u{4}\u{9}contact_list\0\u{3}contact_request\0\u{3}call_log_list\0\u{3}call_log_request\0\u{4}\u{7}device_info\0\u{4}\u{a}gallery_request\0\u{3}gallery_response\0\u{3}connection_control\0\u{3}mac_control\0\u{3}mac_status\0\u{3}mac_media_state\0\u{3}mac_media_control\0\u{3}gallery_albums_request\0\u{3}gallery_albums_response\0\u{3}file_operation\0\u{3}file_operation_result\0")
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}sequence\0\u{3}timestamp_ms\0\u{2}\u{8}handshake\0\u{3}handshake_response\0\u{1}heartbeat\0\u{1}ack\0\u{4}\u{7}notification_event\0\u{3}notification_action\0\u{4}\u{9}sms_conversation\0\u{3}sms_message\0\u{3}sms_send\0\u{3}sms_delivery_status\0\u{4}\u{7}clipboard_sync\0\u{3}url_handoff\0\u{4}\u{9}file_list_request\0\u{3}file_list_response\0\u{3}file_download_request\0\u{3}file_upload_request\0\u{3}file_chunk\0\u{3}file_transfer_complete\0\u{3}file_transfer_cancel\0\u{4}\u{4}video_config\0\u{3}video_frame\0\u{4}\u{9}touch_event\0\u{3}key_event\0\u{3}scroll_event\0\u{4}\u{8}call_event\0\u{3}call_control\0\u{3}call_audio_chunk\0\u{4}\u{8}media_state\0\u{3}media_control\0\u{4}\u{9}contact_list\0\u{3}contact_request\0\u{3}call_log_list\0\u{3}call_log_request\0\u{4}\u{7}device_info\0\u{4}\u{a}gallery_request\0\u{3}gallery_response\0\u{3}connection_control\0\u{3}mac_control\0\u{3}mac_status\0\u{3}mac_media_state\0\u{3}mac_media_control\0\u{3}gallery_albums_request\0\u{3}gallery_albums_response\0\u{3}file_operation\0\u{3}file_operation_result\0\u{3}find_device\0")
 
   mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -2461,6 +2489,19 @@ nonisolated extension ABEnvelope: SwiftProtobuf.Message, SwiftProtobuf._MessageI
           self.payload = .fileOperationResult(v)
         }
       }()
+      case 131: try {
+        var v: ABFindDevice?
+        var hadOneofValue = false
+        if let current = self.payload {
+          hadOneofValue = true
+          if case .findDevice(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.payload = .findDevice(v)
+        }
+      }()
       default: break
       }
     }
@@ -2657,6 +2698,10 @@ nonisolated extension ABEnvelope: SwiftProtobuf.Message, SwiftProtobuf._MessageI
     case .fileOperationResult?: try {
       guard case .fileOperationResult(let v)? = self.payload else { preconditionFailure() }
       try visitor.visitSingularMessageField(value: v, fieldNumber: 130)
+    }()
+    case .findDevice?: try {
+      guard case .findDevice(let v)? = self.payload else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 131)
     }()
     case nil: break
     }
@@ -4525,7 +4570,37 @@ nonisolated extension ABConnectionControl: SwiftProtobuf.Message, SwiftProtobuf.
 }
 
 nonisolated extension ABConnectionControl.Action: SwiftProtobuf._ProtoNameProviding {
-  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0DISCONNECT\0\u{1}START_MIRROR\0")
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0DISCONNECT\0\u{1}START_MIRROR\0\u{1}STOP_MIRROR\0")
+}
+
+nonisolated extension ABFindDevice: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  static let protoMessageName: String = _protobuf_package + ".FindDevice"
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}start\0")
+
+  mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularBoolField(value: &self.start) }()
+      default: break
+      }
+    }
+  }
+
+  func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.start != false {
+      try visitor.visitSingularBoolField(value: self.start, fieldNumber: 1)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  static func ==(lhs: ABFindDevice, rhs: ABFindDevice) -> Bool {
+    if lhs.start != rhs.start {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
 }
 
 nonisolated extension ABMacControl: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {

@@ -75,6 +75,19 @@ class ConnectionService : Service() {
                 mirroringActive = false
                 startForegroundWithType(lastState, includeMediaProjection = false)
             }
+            ACTION_STOP_FIND_ALARM -> {
+                Log.i(TAG, "Stopping find-my-phone alarm (from notification)")
+                com.androidbridge.features.findphone.FindPhoneAlarm.stop()
+            }
+            ACTION_DISCONNECT -> {
+                // User tapped "Disconnect" on the ongoing notification. Remember the
+                // choice so MainActivity shows "Connect", then stop the service.
+                Log.i(TAG, "Disconnect from notification — stopping service")
+                getSharedPreferences("androidbridge", MODE_PRIVATE)
+                    .edit().putBoolean("service_enabled", false).apply()
+                com.androidbridge.features.findphone.FindPhoneAlarm.stop()
+                stopSelf()
+            }
             else -> {
                 Log.i(TAG, "ConnectionService started")
                 connectionManager.start()
@@ -123,6 +136,15 @@ class ConnectionService : Service() {
             else -> getString(R.string.notification_disconnected)
         }
 
+        // "Disconnect" control right on the ongoing notification.
+        val disconnectIntent = Intent(this, ConnectionService::class.java).apply {
+            action = ACTION_DISCONNECT
+        }
+        val disconnectPi = PendingIntent.getService(
+            this, 2, disconnectIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
         return NotificationCompat.Builder(this, AndroidBridgeApp.CHANNEL_CONNECTION)
             .setContentTitle(getString(R.string.app_name))
             .setContentText(text)
@@ -130,6 +152,7 @@ class ConnectionService : Service() {
             .setContentIntent(pendingIntent)
             .setOngoing(true)
             .setSilent(true)
+            .addAction(0, getString(R.string.notification_disconnect_action), disconnectPi)
             .build()
     }
 
@@ -143,6 +166,8 @@ class ConnectionService : Service() {
         private const val NOTIFICATION_ID = 1
         const val ACTION_START_MIRROR = "com.androidbridge.START_MIRROR"
         const val ACTION_STOP_MIRROR = "com.androidbridge.STOP_MIRROR"
+        const val ACTION_STOP_FIND_ALARM = "com.androidbridge.STOP_FIND_ALARM"
+        const val ACTION_DISCONNECT = "com.androidbridge.DISCONNECT"
         const val EXTRA_RESULT_CODE = "result_code"
         const val EXTRA_RESULT_DATA = "result_data"
     }

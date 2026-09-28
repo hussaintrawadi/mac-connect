@@ -348,10 +348,16 @@ class ScreenCapture(private val context: Context) {
                     WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
                     WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
                 PixelFormat.TRANSPARENT
-            ).apply { gravity = Gravity.TOP or Gravity.START }
+            ).apply {
+                gravity = Gravity.TOP or Gravity.START
+                // Keep the screen ON (so mirroring keeps streaming) but drive the
+                // physical backlight to near-minimum — you're watching on the Mac,
+                // so there's no reason to burn the AMOLED at full brightness.
+                screenBrightness = 0.02f
+            }
             wm.addView(view, params)
             keepOnView = view
-            Log.i(TAG, "Keep-screen-on overlay added — phone will not sleep/lock while mirroring")
+            Log.i(TAG, "Keep-screen-on overlay added (dimmed) — stays awake at min brightness while mirroring")
         } catch (e: Exception) {
             Log.w(TAG, "Failed to add keep-screen-on overlay", e)
         }

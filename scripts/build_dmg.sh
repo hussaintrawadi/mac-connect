@@ -11,7 +11,7 @@ MAC_APP_DIR="$PROJECT_ROOT/MacApp"
 OUTPUT_DIR="$PROJECT_ROOT/dist"
 PROJECT_NAME="AndroidBridge"          # xcodeproj/scheme name (internal)
 APP_DISPLAY_NAME="Mac Connect"        # PRODUCT_NAME → built .app name
-VERSION="1.0.0"
+VERSION="1.0.1"
 DMG_NAME="MacConnect-${VERSION}"
 
 echo "=== Building ${APP_DISPLAY_NAME}.app (${CONFIG_UPPER}) ==="
@@ -23,7 +23,7 @@ xcodegen generate
 # Build
 xcodebuild -project "${PROJECT_NAME}.xcodeproj" \
     -scheme "$PROJECT_NAME" \
-    -destination 'platform=macOS' \
+    -destination 'generic/platform=macOS' \
     -configuration "$CONFIG_UPPER" \
     clean build
 

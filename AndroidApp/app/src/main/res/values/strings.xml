@@ -6,4 +6,11 @@
     <string name="notification_connected">Connected to %s</string>
     <string name="notification_searching">Searching for Mac...</string>
     <string name="notification_disconnected">Disconnected</string>
+    <string name="notification_disconnect_action">Disconnect</string>
+
+    <string name="channel_find_phone">Find My Phone</string>
+    <string name="channel_find_phone_desc">Rings your phone loudly when triggered from your Mac</string>
+    <string name="find_phone_title">Finding your phone</string>
+    <string name="find_phone_body">Triggered from your Mac · tap Stop to silence</string>
+    <string name="find_phone_stop">Stop</string>
 </resources>

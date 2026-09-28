@@ -1,19 +1,48 @@
 import SwiftUI
+import AppKit
+
+/// A translucent "Liquid Glass" material backdrop (the same look the menu-bar panel
+/// has) so the panel and the main app window read identically.
+struct VisualEffectBackground: NSViewRepresentable {
+    var material: NSVisualEffectView.Material = .popover
+    var blending: NSVisualEffectView.BlendingMode = .behindWindow
+
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let v = NSVisualEffectView()
+        v.material = material
+        v.blendingMode = blending
+        v.state = .active
+        return v
+    }
+    func updateNSView(_ v: NSVisualEffectView, context: Context) {
+        v.material = material
+        v.blendingMode = blending
+        v.state = .active
+    }
+}
 
 /// A premium custom dropdown panel shown from the menu-bar icon (replacing the
 /// plain native NSMenu) — connection status, feature tiles, now-playing, actions.
+/// Shared verbatim between the menu-bar panel and the main app window.
 struct MenuBarPopoverView: View {
     @ObservedObject var connectionManager: ConnectionManager
+    @ObservedObject var notifications: NotificationFeature
 
     var onMirror: () -> Void
     var onMessages: () -> Void
     var onFiles: () -> Void
     var onGallery: () -> Void
     var onPhone: () -> Void
+    var onFindPhone: () -> Void
+    var onSendToPhone: () -> Void
     var onPair: () -> Void
+    var onConnect: () -> Void
     var onDisconnect: () -> Void
     var onSettings: () -> Void
     var onQuit: () -> Void
+    /// When true the panel fills its container width (used inside the app window);
+    /// when false it's the fixed 320-pt menu-bar width.
+    var fillWidth: Bool = false
 
     private var connected: Bool { connectionManager.state.isConnected }
 
@@ -25,6 +54,8 @@ struct MenuBarPopoverView: View {
             VStack(spacing: 14) {
                 if connected {
                     featureGrid
+                    sendFileButton
+                    disconnectButton
                     nowPlaying
                 } else {
                     notConnected
@@ -33,9 +64,33 @@ struct MenuBarPopoverView: View {
             .padding(16)
 
             Divider().opacity(0.6)
+            notificationsToggle
+            Divider().opacity(0.6)
             footer
         }
-        .frame(width: 320)
+        .frame(width: fillWidth ? nil : 320)
+        .frame(maxWidth: fillWidth ? .infinity : nil)
+        // NOTE: the material backdrop is applied by each host (the menu-bar panel and
+        // the app window) so each can position it correctly — not here.
+    }
+
+    // MARK: - Notifications toggle
+
+    private var notificationsToggle: some View {
+        Toggle(isOn: $notifications.enabled) {
+            HStack(spacing: 9) {
+                Image(systemName: notifications.enabled ? "bell.fill" : "bell.slash.fill")
+                    .frame(width: 16)
+                    .foregroundStyle(notifications.enabled ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
+                Text("Phone notifications")
+                    .font(.subheadline)
+            }
+        }
+        .toggleStyle(.switch)
+        .controlSize(.small)
+        .tint(.green)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 9)
     }
 
     // MARK: - Header
@@ -97,17 +152,17 @@ struct MenuBarPopoverView: View {
         case .connected: return .green
         case .searching, .connecting: return .orange
         case .reconnecting: return .orange
-        case .disconnected: return .secondary
+        case .disconnected: return connectionManager.bluetoothLinked ? .blue : .secondary
         }
     }
 
     private var statusText: String {
         switch connectionManager.state {
         case .connected(let name): return name
-        case .searching: return "Searching…"
+        case .searching: return connectionManager.bluetoothLinked ? "Connected · Bluetooth" : "Searching…"
         case .connecting: return "Connecting…"
-        case .reconnecting: return "Reconnecting…"
-        case .disconnected: return "Not connected"
+        case .reconnecting: return connectionManager.bluetoothLinked ? "Connected · Bluetooth" : "Reconnecting…"
+        case .disconnected: return connectionManager.bluetoothLinked ? "Connected · Bluetooth" : "Not connected"
         }
     }
 
@@ -120,12 +175,48 @@ struct MenuBarPopoverView: View {
             tile("Files", "folder", onFiles)
             tile("Gallery", "photo.on.rectangle", onGallery)
             tile("Phone", "phone", onPhone)
-            tile("Disconnect", "bolt.slash", onDisconnect)
+            tile("Find Phone", "wave.3.right.circle", onFindPhone)
         }
     }
 
     private func tile(_ title: String, _ icon: String, _ action: @escaping () -> Void) -> some View {
         FeatureTile(title: title, icon: icon, action: action)
+    }
+
+    // MARK: - Send file to phone (AirDrop-style)
+
+    private var sendFileButton: some View {
+        Button(action: onSendToPhone) {
+            HStack(spacing: 8) {
+                Image(systemName: "paperplane.fill")
+                Text("Send file to phone")
+            }
+            .font(.subheadline)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 8)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(Color.accentColor)
+        .background(Color.accentColor.opacity(0.10), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    // MARK: - Disconnect (hard stop — stops all searching until you press Connect)
+
+    private var disconnectButton: some View {
+        Button(action: onDisconnect) {
+            HStack(spacing: 6) {
+                Image(systemName: "bolt.slash.fill")
+                Text("Disconnect")
+            }
+            .font(.subheadline)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 7)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.red)
+        .background(Color.red.opacity(0.08), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 
     // MARK: - Now Playing
@@ -167,19 +258,40 @@ struct MenuBarPopoverView: View {
 
     private var notConnected: some View {
         VStack(spacing: 12) {
-            Image(systemName: "iphone.gen3.slash")
-                .font(.system(size: 34, weight: .light))
-                .foregroundStyle(.secondary)
-            Text("No phone connected")
-                .font(.subheadline).foregroundStyle(.secondary)
-            Button(action: onPair) {
-                Text("Pair New Device")
-                    .frame(maxWidth: .infinity)
+            if connectionManager.userDisconnected {
+                // Paired but the user chose Disconnect — offer a one-tap reconnect.
+                Image(systemName: "bolt.slash")
+                    .font(.system(size: 34, weight: .light))
+                    .foregroundStyle(.secondary)
+                Text("Disconnected")
+                    .font(.subheadline).foregroundStyle(.secondary)
+                Button(action: onConnect) {
+                    Text("Connect").frame(maxWidth: .infinity)
+                }
+                .controlSize(.large)
+                .buttonStyle(.borderedProminent)
+            } else {
+                Image(systemName: "iphone.gen3.slash")
+                    .font(.system(size: 34, weight: .light))
+                    .foregroundStyle(.secondary)
+                Text(searchingNow ? "Searching for your phone…" : "No phone connected")
+                    .font(.subheadline).foregroundStyle(.secondary)
+                Button(action: onPair) {
+                    Text("Pair New Device")
+                        .frame(maxWidth: .infinity)
+                }
+                .controlSize(.large)
+                .buttonStyle(.borderedProminent)
             }
-            .controlSize(.large)
-            .buttonStyle(.borderedProminent)
         }
         .padding(.vertical, 8)
+    }
+
+    private var searchingNow: Bool {
+        switch connectionManager.state {
+        case .searching, .connecting, .reconnecting: return true
+        default: return false
+        }
     }
 
     // MARK: - Footer

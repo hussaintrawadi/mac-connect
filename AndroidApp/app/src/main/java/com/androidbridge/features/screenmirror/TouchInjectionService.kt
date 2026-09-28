@@ -40,7 +40,9 @@ class TouchInjectionService : AccessibilityService() {
             try {
                 com.androidbridge.features.clipboard.ClipboardBridge.instance?.pollClipboard()
             } catch (_: Exception) {}
-            clipboardHandler.postDelayed(this, 1500)
+            // 3s is plenty for clipboard sync and roughly halves the background
+            // wakeups vs 1.5s — noticeably lighter on battery.
+            clipboardHandler.postDelayed(this, 3000)
         }
     }
 

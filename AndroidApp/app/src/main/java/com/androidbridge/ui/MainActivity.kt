@@ -73,6 +73,27 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    // "Send File to Mac" — pick one or more files and stream them to the Mac
+    // (AirDrop-style, phone → Mac). Mirrors the Mac's "Send file to phone".
+    private val sendFileLauncher = registerForActivityResult(
+        ActivityResultContracts.GetMultipleContents()
+    ) { uris ->
+        if (uris.isNullOrEmpty()) return@registerForActivityResult
+        val bridge = com.androidbridge.features.filesystem.FileSystemBridge.instance
+        var sent = 0
+        if (bridge != null) {
+            for (uri in uris) {
+                try { if (bridge.pushUriToMac(uri)) sent++ } catch (_: Exception) {}
+            }
+        }
+        val msg = when {
+            sent == 0 -> "Not connected to your Mac"
+            sent == 1 -> "Sending to your Mac…"
+            else -> "Sending $sent files to your Mac…"
+        }
+        android.widget.Toast.makeText(this, msg, android.widget.Toast.LENGTH_SHORT).show()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
@@ -98,8 +119,29 @@ class MainActivity : AppCompatActivity() {
         // Existing users who finished onboarding before media perms existed: ask now,
         // otherwise the gallery (MediaStore) comes back empty.
         ensureMediaPermissions()
+        ensureBackgroundSurvival()
 
         maybeHandleMirrorRequest(intent)
+    }
+
+    /** Ask to exempt the app from battery optimization so the OS (Xiaomi/MIUI in
+     *  particular) doesn't kill it after a while — which silently kills the
+     *  Accessibility service and leaves the Mac able to view but not control. */
+    private fun ensureBackgroundSurvival() {
+        val prefs = getSharedPreferences("androidbridge", MODE_PRIVATE)
+        if (prefs.getBoolean("battery_exemption_asked", false)) return
+        try {
+            val pm = getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+            if (!pm.isIgnoringBatteryOptimizations(packageName)) {
+                prefs.edit().putBoolean("battery_exemption_asked", true).apply()
+                @android.annotation.SuppressLint("BatteryLife")
+                val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                    Uri.parse("package:$packageName"))
+                startActivity(intent)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Battery exemption request failed", e)
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -248,32 +290,59 @@ class MainActivity : AppCompatActivity() {
         // Read + push the current clipboard whenever the app is foregrounded.
         ClipboardBridge.instance?.checkClipboardOnResume()
         mediaHandler.post(mediaRefresh)
-        maybePromptAccessibility()
+        recoverNotificationListener()
+        maybePromptPermissions()
     }
 
-    private var accessibilityPrompted = false
+    private var permsPrompted = false
 
-    /** Control from the Mac needs the Accessibility service. Reinstalling the app
-     *  silently disables it, so prompt the user to turn it back on. */
-    private fun maybePromptAccessibility() {
+    /** Notifications + phone→Mac clipboard depend on two special-access services
+     *  that Android silently REVOKES on every app update/reinstall:
+     *  Notification access (NotificationListenerService) and the Accessibility
+     *  service. Detect either being off and guide the user to re-enable. */
+    private fun maybePromptPermissions() {
         if (!pairingStore.hasPairedDevice()) return
-        if (isTouchServiceEnabled()) { accessibilityPrompted = false; return }
-        if (accessibilityPrompted) return
-        accessibilityPrompted = true
-        androidx.appcompat.app.AlertDialog.Builder(this)
-            .setTitle("Enable phone control")
+        val notifOff = !isNotificationAccessEnabled()
+        val a11yOff = !isTouchServiceEnabled()
+        if (!notifOff && !a11yOff) { permsPrompted = false; return }
+        if (permsPrompted) return
+        permsPrompted = true
+
+        val missing = buildString {
+            if (notifOff) append("• Notification access (to mirror SMS and notifications)\n")
+            if (a11yOff) append("• Accessibility (to control the phone and sync the clipboard)\n")
+        }
+        val b = androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Re-enable Mac Connect access")
             .setMessage(
-                "To control your phone from your Mac (tap, swipe, type), turn on the " +
-                "“Mac Connect” Accessibility service.\n\nNote: reinstalling the app " +
-                "turns this off, so you'll need to re-enable it after each update."
+                "Updating the app turns these off. Turn them back on so notifications " +
+                "and clipboard work again:\n\n$missing"
             )
-            .setPositiveButton("Open Settings") { _, _ ->
-                try {
-                    startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-                } catch (_: Exception) {}
-            }
             .setNegativeButton("Later", null)
-            .show()
+        if (notifOff) b.setPositiveButton("Notification access") { _, _ ->
+            try { startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) } catch (_: Exception) {}
+        }
+        if (a11yOff) b.setNeutralButton("Accessibility") { _, _ ->
+            try { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) } catch (_: Exception) {}
+        }
+        b.show()
+    }
+
+    /** If notification access is still granted but the listener got unbound after
+     *  a process restart/update, wake it back up — no user action needed. */
+    private fun recoverNotificationListener() {
+        if (!isNotificationAccessEnabled()) return
+        try {
+            android.service.notification.NotificationListenerService.requestRebind(
+                ComponentName(this, com.androidbridge.features.notifications.BridgeNotificationListener::class.java)
+            )
+        } catch (_: Exception) {}
+    }
+
+    private fun isNotificationAccessEnabled(): Boolean {
+        val flat = Settings.Secure.getString(contentResolver, "enabled_notification_listeners") ?: return false
+        val cn = ComponentName(this, com.androidbridge.features.notifications.BridgeNotificationListener::class.java).flattenToString()
+        return flat.split(":").any { it.equals(cn, true) || it.endsWith("BridgeNotificationListener") }
     }
 
     private fun isTouchServiceEnabled(): Boolean {
@@ -396,6 +465,13 @@ class MainActivity : AppCompatActivity() {
                 macRinging = true
             }
             binding.findMacButton.text = if (macRinging) "Stop Sound" else "Find Mac"
+        }
+        binding.sendFileToMacButton.setOnClickListener {
+            try {
+                sendFileLauncher.launch("*/*")
+            } catch (e: Exception) {
+                android.widget.Toast.makeText(this, "Couldn't open the file picker", android.widget.Toast.LENGTH_SHORT).show()
+            }
         }
         // Mac now-playing controls
         binding.macMediaPrev.setOnClickListener { MacBridge.sendMedia(MacMediaControl.Action.PREVIOUS) }

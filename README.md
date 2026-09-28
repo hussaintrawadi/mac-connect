@@ -15,6 +15,7 @@ your own Wi-Fi. No cloud, no accounts, no tracking.
 ![Android 8+](https://img.shields.io/badge/Android-8.0%2B-3DDC84.svg)
 ![Swift](https://img.shields.io/badge/Swift-SwiftUI-F05138.svg)
 ![Kotlin](https://img.shields.io/badge/Kotlin-7F52FF.svg)
+[![Vibe coded with Claude](https://img.shields.io/badge/vibe%20coded%20with-Claude-D97757.svg)](https://claude.com/claude-code)
 
 [Features](#features) · [How it works](#how-it-works) · [Install](#install) ·
 [Build from source](docs/BUILDING.md) · [Architecture](docs/ARCHITECTURE.md) · [Protocol](docs/PROTOCOL.md)
@@ -35,7 +36,8 @@ everything over a single TCP connection using Protocol Buffers. Your messages, c
 screen and clipboard never leave your network, because there is no server in the middle.
 
 Apple's Continuity and Microsoft's Phone Link were the inspiration. This one is open, free,
-and runs entirely on hardware you own.
+and runs entirely on hardware you own. It is vibe coded with Claude: I decided what it should
+do and tested it on a real Mac and phone every day, and Claude wrote the Swift and Kotlin.
 
 ## Features
 
@@ -46,7 +48,8 @@ and runs entirely on hardware you own.
 - A right-click menu for **Back, Home, Recents and Notifications**, directional swipes,
   **Wake Screen** and **Lock Phone**.
 - Type your **lock-screen or app-lock PIN** from the Mac keyboard.
-- The phone screen stays awake while you use it.
+- The phone screen stays awake while you use it, with its backlight near minimum, and closing
+  the mirror stops capture. You watch on the Mac, so the phone's display never burns in.
 - Opening the mirror on the Mac asks for **Touch ID**.
 
 ### Calls
@@ -55,6 +58,10 @@ and runs entirely on hardware you own.
 - An **incoming-call pop-up** on the Mac with Answer and Decline, and a ringtone.
 - Place calls from the Mac, mute, and hang up.
 
+### Find My Phone
+- A **Find Phone** tile in the menu bar makes the phone ring at full volume, even on silent,
+  with a full-screen Stop button over the lock screen. It stops by itself after a minute.
+
 ### Messages
 - Read and reply to **SMS** from the Mac in real time, with contact names.
 
@@ -62,6 +69,9 @@ and runs entirely on hardware you own.
 - Browse the phone's storage like Finder, with **Quick Look previews** (Space), image and
   video thumbnails, and **New Folder, Rename and Delete**.
 - **Drag files in and out** between Finder and the phone, or use ⌘C and ⌘V.
+- **Send files both ways, AirDrop style.** Drop files on the Mac's send window and they land in
+  the phone's Downloads. Share from any Android app to *Mac Connect* and they land in the Mac's
+  Downloads and open in Finder.
 
 ### Gallery
 - The phone's **photos and videos** on the Mac, in folders (All Media, Videos, Camera,
@@ -70,6 +80,8 @@ and runs entirely on hardware you own.
 ### Notifications
 - Phone notifications appear on the Mac with the **real app name and icon**, and respect
   macOS **Focus and Do Not Disturb**.
+- An on/off switch in the menu bar, and one sound per app every 30 seconds, so a busy group
+  chat does not ding nonstop.
 
 ### Clipboard
 - **Copy on one device, paste on the other**, including **images**, both ways.
@@ -84,7 +96,11 @@ and runs entirely on hardware you own.
 
 ### Always connected
 - Pair once. After that the two reconnect on their own whenever they are on the same
-  Wi-Fi, like a Bluetooth device, without scanning the QR code again.
+  Wi-Fi, like AirPods, without scanning the QR code again. The Mac searches hard for a couple
+  of minutes, then retries now and then to save battery, and reconnects the moment it wakes.
+- **Bluetooth fallback.** When Wi-Fi cannot carry the link, notifications, calls and SMS keep
+  flowing over Bluetooth LE, and it switches back to Wi-Fi on its own.
+- **Disconnect means disconnect.** Press it and the Mac stops looking until you press Connect.
 
 ## How it works
 
@@ -148,8 +164,8 @@ What is not possible, and why:
   screen shows black in the mirror. Typing the PIN still works.
 - **Encryption on the wire.** The connection is plain TCP on your LAN, with no TLS yet. It is
   meant for a trusted home or office network.
-- **Clipboard from phone to Mac** only syncs while the phone app is in the foreground, an
-  Android 10 and later restriction.
+- **Bluetooth carries the essentials only.** Notifications, calls and SMS work over the
+  Bluetooth fallback. Mirroring, files and the gallery need Wi-Fi.
 
 ## Project layout
 
@@ -181,4 +197,4 @@ both sides.
 ## License
 
 [MIT](LICENSE). Free to use, change and share. Built by
-[Hussain Trawadi](https://github.com/hussaintrawadi).
+[Hussain Trawadi](https://github.com/hussaintrawadi), vibe coded with [Claude](https://claude.com/claude-code).
